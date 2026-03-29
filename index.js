@@ -1,7 +1,6 @@
 const express = require('express')
 const TelegramBot = require('node-telegram-bot-api')
 const OpenAI = require('openai')
-const fetch = require('node-fetch')
 
 const app = express()
 app.use(express.json())
@@ -80,55 +79,49 @@ async function runTest(chatId) {
 }
 
 async function generateImage(promptText) {
-  try {
-    const start = await fetch('https://api.replicate.com/v1/predictions', {
-      method: 'POST',
+  const start = await fetch('https://api.replicate.com/v1/predictions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      version: "c221b2b8ef527988ecf4b6a6cde2baf9d1d6dbe2f5d5a63d315ff78eaefdd8af",
+      input: {
+        prompt: promptText,
+        aspect_ratio: "16:9"
+      }
+    })
+  })
+
+  const prediction = await start.json()
+  console.log('START:', prediction)
+
+  if (!prediction.id) throw new Error('No prediction id')
+
+  let result
+
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000))
+
+    const check = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
       headers: {
-        Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        version: "c221b2b8ef527988ecf4b6a6cde2baf9d1d6dbe2f5d5a63d315ff78eaefdd8af",
-        input: {
-          prompt: promptText,
-          aspect_ratio: "16:9"
-        }
-      })
+        Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`
+      }
     })
 
-    const prediction = await start.json()
-    console.log('START:', prediction)
+    result = await check.json()
+    console.log('STATUS:', result.status)
 
-    if (!prediction.id) throw new Error('No prediction id')
-
-    let result
-
-    while (true) {
-      await new Promise(r => setTimeout(r, 2000))
-
-      const check = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
-        headers: {
-          Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`
-        }
-      })
-
-      result = await check.json()
-      console.log('STATUS:', result.status)
-
-      if (result.status === 'succeeded') break
-      if (result.status === 'failed') throw new Error('Replicate failed')
-    }
-
-    console.log('FINAL:', result)
-
-    if (!result.output) throw new Error('No output')
-
-    return Array.isArray(result.output)
-      ? result.output[0]
-      : result.output
-
-  } catch (err) {
-    console.error('IMAGE ERROR:', err)
-    throw err
+    if (result.status === 'succeeded') break
+    if (result.status === 'failed') throw new Error('Replicate failed')
   }
+
+  console.log('FINAL:', result)
+
+  if (!result.output) throw new Error('No output')
+
+  return Array.isArray(result.output)
+    ? result.output[0]
+    : result.output
 }
