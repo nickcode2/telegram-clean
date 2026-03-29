@@ -93,7 +93,8 @@ async function generateImage(promptText) {
     body: JSON.stringify({
       version: "c221b2b8ef527988ecf4b6a6cde2baf9d1d6dbe2f5d5a63d315ff78eaefdd8af",
       input: {
-        prompt: promptText
+        prompt: promptText,
+        aspect_ratio: "16:9"
       }
     })
   })
@@ -101,7 +102,7 @@ async function generateImage(promptText) {
   const prediction = await start.json()
 
   if (!prediction.id) {
-    console.log(prediction)
+    console.log('START ERROR:', prediction)
     throw new Error('Replicate start failed')
   }
 
@@ -120,20 +121,20 @@ async function generateImage(promptText) {
 
     if (result.status === 'succeeded') break
     if (result.status === 'failed') {
-      console.log(result)
+      console.log('FAILED:', result)
       throw new Error('Replicate failed')
     }
   }
 
-  if (!result.output || !result.output.length) {
+  if (!result.output) {
+    console.log('NO OUTPUT:', result)
     throw new Error('No image output')
   }
 
-  return result.output[0]
+  // 🔥 handle BOTH formats
+  if (Array.isArray(result.output)) {
+    return result.output[0]
+  } else {
+    return result.output
+  }
 }
-
-const PORT = process.env.PORT || 3000
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('running')
-})
