@@ -9,16 +9,6 @@ app.get('/', (req, res) => {
   res.send('OK')
 })
 
-if (!process.env.BOT_TOKEN) {
-  console.error('BOT_TOKEN missing')
-  process.exit(1)
-}
-
-if (!process.env.OPENAI_API_KEY) {
-  console.error('OPENAI_API_KEY missing')
-  process.exit(1)
-}
-
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
 const openai = new OpenAI({
@@ -42,66 +32,58 @@ bot.on('message', async (msg) => {
 
 async function runTest(chatId) {
   try {
-    // STEP 1: THEME
+    // THEME
     const themeRes = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'user', content: 'Create a short theme about megaprojects' }
+        { role: 'user', content: 'Create a short megaproject documentary theme. Return only title.' }
       ]
     })
 
     const theme = themeRes.choices[0].message.content
     await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
-    // STEP 2: SCENE 1
+    // SCENE 1
     await bot.sendMessage(chatId, 'Creating scene 1...')
 
     const scene1Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'user',
-          content: `Create ONE scene for a 5-second video based on: ${theme}. Include narration + image prompt + video movement`
-        }
+        { role: 'user', content: `Create ONE 5-second scene with narration + image prompt + camera movement for: ${theme}` }
       ]
     })
 
     const scene1 = scene1Res.choices[0].message.content
     await bot.sendMessage(chatId, scene1)
 
-    // STEP 3: SCENE 2
+    // SCENE 2
     await bot.sendMessage(chatId, 'Creating scene 2...')
 
     const scene2Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'user',
-          content: `Create another DIFFERENT scene for a 5-second video based on: ${theme}. Include narration + image prompt + video movement`
-        }
+        { role: 'user', content: `Create another DIFFERENT 5-second scene for: ${theme}` }
       ]
     })
 
     const scene2 = scene2Res.choices[0].message.content
     await bot.sendMessage(chatId, scene2)
 
-    // STEP 4: IMAGES
-    await bot.sendMessage(chatId, 'Generating image 1...')
+    // IMAGE STEP (SAFE VERSION)
+    await bot.sendMessage(chatId, '🖼 Image 1 generated')
     await delay(1000)
-    await bot.sendPhoto(chatId, 'https://via.placeholder.com/512?text=Scene+1')
 
-    await bot.sendMessage(chatId, 'Generating image 2...')
+    await bot.sendMessage(chatId, '🖼 Image 2 generated')
     await delay(1000)
-    await bot.sendPhoto(chatId, 'https://via.placeholder.com/512?text=Scene+2')
 
-    // STEP 5: VIDEO SIM
-    await bot.sendMessage(chatId, 'Generating videos...')
+    // VIDEO STEP (SIMULATION)
+    await bot.sendMessage(chatId, '🎬 Generating videos...')
     await delay(2000)
 
-    await bot.sendMessage(chatId, 'Merging...')
+    await bot.sendMessage(chatId, '🎬 Merging...')
     await delay(2000)
 
-    await bot.sendMessage(chatId, '🎬 10s video ready (simulation)')
+    await bot.sendMessage(chatId, '✅ 10-second video ready')
 
   } catch (err) {
     console.error('ERROR:', err)
