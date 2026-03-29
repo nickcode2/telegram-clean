@@ -44,8 +44,6 @@ async function runTest(chatId) {
     await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
     // SCENE 1
-    await bot.sendMessage(chatId, 'Creating scene 1...')
-
     const scene1Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -57,8 +55,6 @@ async function runTest(chatId) {
     await bot.sendMessage(chatId, scene1)
 
     // SCENE 2
-    await bot.sendMessage(chatId, 'Creating scene 2...')
-
     const scene2Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -69,21 +65,19 @@ async function runTest(chatId) {
     const scene2 = scene2Res.choices[0].message.content
     await bot.sendMessage(chatId, scene2)
 
-    // IMAGE STEP (SAFE VERSION)
-    await bot.sendMessage(chatId, '🖼 Image 1 generated')
-    await delay(1000)
+    // IMAGE 1 (REAL)
+    await bot.sendMessage(chatId, '🖼 Generating image 1...')
 
-    await bot.sendMessage(chatId, '🖼 Image 2 generated')
-    await delay(1000)
+    const image1 = await generateImage(scene1)
+    await bot.sendPhoto(chatId, image1)
 
-    // VIDEO STEP (SIMULATION)
-    await bot.sendMessage(chatId, '🎬 Generating videos...')
-    await delay(2000)
+    // IMAGE 2 (REAL)
+    await bot.sendMessage(chatId, '🖼 Generating image 2...')
 
-    await bot.sendMessage(chatId, '🎬 Merging...')
-    await delay(2000)
+    const image2 = await generateImage(scene2)
+    await bot.sendPhoto(chatId, image2)
 
-    await bot.sendMessage(chatId, '✅ 10-second video ready')
+    await bot.sendMessage(chatId, '✅ Images done')
 
   } catch (err) {
     console.error('ERROR:', err)
@@ -91,8 +85,40 @@ async function runTest(chatId) {
   }
 }
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
+async function generateImage(promptText) {
+  const response = await fetch('https://api.replicate.com/v1/predictions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      version: "black-forest-labs/flux-2-max",
+      input: {
+        prompt: promptText
+      }
+    })
+  })
+
+  const prediction = await response.json()
+
+  let result
+  while (true) {
+    const check = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
+      headers: {
+        'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}`
+      }
+    })
+
+    result = await check.json()
+
+    if (result.status === 'succeeded') break
+    if (result.status === 'failed') throw new Error('Replicate failed')
+
+    await new Promise(r => setTimeout(r, 2000))
+  }
+
+  return result.output[0]
 }
 
 const PORT = process.env.PORT || 3000
