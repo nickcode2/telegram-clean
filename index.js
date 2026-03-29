@@ -1,23 +1,31 @@
 const express = require('express')
 const TelegramBot = require('node-telegram-bot-api')
+const OpenAI = require('openai')
 
-// safety check
+// safety
 if (!process.env.BOT_TOKEN) {
   console.error('BOT_TOKEN missing')
+  process.exit(1)
+}
+if (!process.env.OPENAI_API_KEY) {
+  console.error('OPENAI_API_KEY missing')
   process.exit(1)
 }
 
 const app = express()
 
-// Railway needs a running server
 app.get('/', (req, res) => {
   res.send('OK')
 })
 
-// 🔥 polling mode (stable)
+// Telegram
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
-// simple memory
+// OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+})
+
 const userStates = {}
 
 bot.on('message', async (msg) => {
@@ -41,23 +49,43 @@ bot.on('message', async (msg) => {
 
     const theme = text
 
-    bot.sendMessage(chatId, 'Ok, working on it...')
+    bot.sendMessage(chatId, 'Ok, generating script...')
 
-    console.log('THEME RECEIVED:', theme)
+    try {
+      // 🔥 ChatGPT call
+      const response = await openai.chat.completions.create({
+        model: 'gpt-5.3',
+        messages: [
+          {
+            role: 'user',
+            content: `Create a high-retention YouTube script about: ${theme}. Make it engaging and structured in scenes.`
+          }
+        ]
+      })
 
-    // 🚀 FAKE PROCESS (next we replace this with real automation)
-    setTimeout(() => {
-      bot.sendMessage(chatId, `Done with theme: ${theme}`)
-    }, 3000)
+      const script = response.choices[0].message.content
+
+      // send result (split if too long)
+      const chunks = script.match(/[\s\S]{1,3500}/g)
+
+      for (const chunk of chunks) {
+        await bot.sendMessage(chatId, chunk)
+      }
+
+      bot.sendMessage(chatId, 'Done ✅')
+
+    } catch (err) {
+      console.error(err)
+      bot.sendMessage(chatId, 'Error generating script')
+    }
 
     return
   }
 
-  // default
   bot.sendMessage(chatId, 'Send do it')
 })
 
-// start server
+// server
 const PORT = process.env.PORT || 3000
 app.listen(PORT, '0.0.0.0', () => {
   console.log('running on port', PORT)
