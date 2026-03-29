@@ -1,22 +1,28 @@
 const express = require('express')
 const TelegramBot = require('node-telegram-bot-api')
 
-if (!process.env.BOT_TOKEN) {
-  console.error('BOT_TOKEN missing')
-  process.exit(1)
-}
-
 const app = express()
+
+// VERY IMPORTANT
 app.use(express.json())
+
+// health check (so Railway doesn’t show error page)
+app.get('/', (req, res) => {
+  res.send('OK')
+})
 
 const bot = new TelegramBot(process.env.BOT_TOKEN)
 
-// simple memory for user state
 const userStates = {}
 
 app.post('/webhook', (req, res) => {
-  bot.processUpdate(req.body)
-  res.sendStatus(200)
+  try {
+    bot.processUpdate(req.body)
+    res.sendStatus(200)
+  } catch (err) {
+    console.error(err)
+    res.sendStatus(200)
+  }
 })
 
 bot.on('message', (msg) => {
@@ -35,11 +41,11 @@ bot.on('message', (msg) => {
     return
   }
 
-  bot.sendMessage(chatId, 'Send "do it" to start')
+  bot.sendMessage(chatId, 'Send do it')
 })
 
 const PORT = process.env.PORT || 3000
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log('running on port ' + PORT)
 })
