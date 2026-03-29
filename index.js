@@ -47,7 +47,7 @@ async function runTest(chatId) {
     const scene1Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'user', content: `Create ONE 5-second scene with narration + image prompt + camera movement for: ${theme}` }
+        { role: 'user', content: `Create ONE 5-second scene with narration + image prompt for: ${theme}` }
       ]
     })
 
@@ -65,57 +65,60 @@ async function runTest(chatId) {
     const scene2 = scene2Res.choices[0].message.content
     await bot.sendMessage(chatId, scene2)
 
-    // IMAGE 1 (REAL)
+    // IMAGE 1
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
+    const img1 = await generateImage(scene1)
+    await bot.sendPhoto(chatId, img1)
 
-    const image1 = await generateImage(scene1)
-    await bot.sendPhoto(chatId, image1)
-
-    // IMAGE 2 (REAL)
+    // IMAGE 2
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
-
-    const image2 = await generateImage(scene2)
-    await bot.sendPhoto(chatId, image2)
+    const img2 = await generateImage(scene2)
+    await bot.sendPhoto(chatId, img2)
 
     await bot.sendMessage(chatId, '✅ Images done')
 
   } catch (err) {
-    console.error('ERROR:', err)
+    console.error(err)
     bot.sendMessage(chatId, 'Error occurred')
   }
 }
 
 async function generateImage(promptText) {
-  const response = await fetch('https://api.replicate.com/v1/predictions', {
+  // STEP 1: create prediction
+  const start = await fetch('https://api.replicate.com/v1/predictions', {
     method: 'POST',
     headers: {
-      'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}`,
+      Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      version: "black-forest-labs/flux-2-max",
+      model: "black-forest-labs/flux-2-max",
       input: {
         prompt: promptText
       }
     })
   })
 
-  const prediction = await response.json()
+  const prediction = await start.json()
 
+  // STEP 2: wait until done
   let result
   while (true) {
+    await new Promise(r => setTimeout(r, 2000))
+
     const check = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
       headers: {
-        'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}`
+        Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`
       }
     })
 
     result = await check.json()
 
     if (result.status === 'succeeded') break
-    if (result.status === 'failed') throw new Error('Replicate failed')
-
-    await new Promise(r => setTimeout(r, 2000))
+    if (result.status === 'failed') {
+      console.log(result)
+      throw new Error('Replicate failed')
+    }
   }
 
   return result.output[0]
