@@ -2,81 +2,73 @@ const express = require('express')
 const TelegramBot = require('node-telegram-bot-api')
 const OpenAI = require('openai')
 
-// safety
-if (!process.env.BOT_TOKEN) {
-  console.error('BOT_TOKEN missing')
-  process.exit(1)
-}
-if (!process.env.OPENAI_API_KEY) {
-  console.error('OPENAI_API_KEY missing')
-  process.exit(1)
-}
-
 const app = express()
+app.use(express.json())
 
 app.get('/', (req, res) => {
   res.send('OK')
 })
 
-// Telegram
-const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
+if (!process.env.BOT_TOKEN) {
+  console.error('BOT_TOKEN missing')
+  process.exit(1)
+}
 
-// OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+if (!process.env.OPENAI_API_KEY) {
+  console.error('OPENAI_API_KEY missing')
+  process.exit(1)
+}
+
+const bot = new TelegramBot(process.env.BOT_TOKEN)
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 const userStates = {}
 
+app.post('/webhook', (req, res) => {
+  try {
+    bot.processUpdate(req.body)
+    res.sendStatus(200)
+  } catch (err) {
+    console.error(err)
+    res.sendStatus(200)
+  }
+})
+
 bot.on('message', async (msg) => {
-  if (!msg.text) return
-
   const chatId = msg.chat.id
-  const text = msg.text.toLowerCase()
+  const text = msg.text
 
-  console.log('MSG:', text)
+  if (!text) return
 
-  // step 1
   if (text === 'do it') {
     userStates[chatId] = 'waiting_for_theme'
     bot.sendMessage(chatId, 'What theme?')
     return
   }
 
-  // step 2
   if (userStates[chatId] === 'waiting_for_theme') {
     userStates[chatId] = null
 
-    const theme = text
-
-    bot.sendMessage(chatId, 'Ok, generating script...')
+    bot.sendMessage(chatId, 'Ok, working on it...')
 
     try {
-      // 🔥 ChatGPT call
       const response = await openai.chat.completions.create({
-        model: 'gpt-5.3',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'user',
-            content: `Create a high-retention YouTube script about: ${theme}. Make it engaging and structured in scenes.`
+            content: 'Create ONE YouTube documentary theme about massive engineering, hidden infrastructure, or megaprojects. Return only one short title.'
           }
         ]
       })
 
-      const script = response.choices[0].message.content
+      const theme = response.choices[0].message.content
 
-      // send result (split if too long)
-      const chunks = script.match(/[\s\S]{1,3500}/g)
-
-      for (const chunk of chunks) {
-        await bot.sendMessage(chatId, chunk)
-      }
-
-      bot.sendMessage(chatId, 'Done ✅')
+      bot.sendMessage(chatId, `🔥 THEME:\n${theme}`)
 
     } catch (err) {
       console.error(err)
-      bot.sendMessage(chatId, 'Error generating script')
+      bot.sendMessage(chatId, 'Error generating theme')
     }
 
     return
@@ -85,8 +77,8 @@ bot.on('message', async (msg) => {
   bot.sendMessage(chatId, 'Send do it')
 })
 
-// server
 const PORT = process.env.PORT || 3000
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('running on port', PORT)
+  console.log('running')
 })
