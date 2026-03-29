@@ -31,47 +31,113 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id
   const text = msg.text
 
-  console.log('MSG:', text)
-
   if (!text) return
 
+  console.log('MSG:', text)
+
+  // STEP 1
   if (text === 'do it') {
-    userStates[chatId] = 'waiting_for_theme'
-    bot.sendMessage(chatId, 'What theme?')
-    return
-  }
-
-  if (userStates[chatId] === 'waiting_for_theme') {
-    userStates[chatId] = null
-
-    bot.sendMessage(chatId, 'Ok, working on it...')
-
-    try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content:
-              'Create ONE YouTube documentary theme about massive engineering, hidden infrastructure, or megaprojects. Return only one short title.'
-          }
-        ]
-      })
-
-      const result = response.choices[0].message.content
-
-      bot.sendMessage(chatId, result)
-
-    } catch (err) {
-      console.error(err)
-      bot.sendMessage(chatId, 'Error generating theme')
-    }
-
+    bot.sendMessage(chatId, 'Generating full system...')
+    runSystem(chatId)
     return
   }
 
   bot.sendMessage(chatId, 'Send do it')
 })
+
+async function runSystem(chatId) {
+  try {
+    // 🔥 STEP 1: GENERATE THEME
+    const themeRes = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'user',
+          content: `
+Generate ONE unique YouTube documentary theme.
+
+Style:
+Massive engineering, megaprojects, hidden infrastructure, underground systems, military tech.
+
+Return ONLY:
+THEME: <short title>
+`
+        }
+      ]
+    })
+
+    const theme = themeRes.choices[0].message.content
+
+    await bot.sendMessage(chatId, theme)
+
+    // 🔥 STEP 2: GENERATE FULL SCRIPT (50 scenes)
+    const scriptRes = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'user',
+          content: `
+Create a full 50-scene YouTube documentary.
+
+Use this theme:
+${theme}
+
+RULES:
+- 50 scenes total
+- scenes 1–20: fast, ~22 words
+- scenes 21–50: slower, ~32 words
+
+FOR EACH SCENE INCLUDE:
+
+Scene number
+
+Narration
+
+Image Prompt 1 (different camera angle)
+
+Image Prompt 2 (different camera angle)
+
+Video Prompt (camera movement, no repetition)
+
+STYLE:
+- massive scale
+- realistic
+- engineering focused
+- no fantasy
+- always include people for scale
+
+CAMERA ANGLES ROTATE:
+top down aerial
+low ground
+side wide
+diagonal high
+inside perspective
+vertical shaft
+elevated platform
+extreme wide
+
+RETURN CLEAN TEXT
+`
+        }
+      ]
+    })
+
+    const script = scriptRes.choices[0].message.content
+
+    // 🔥 SEND IN CHUNKS (Telegram limit)
+    const chunks = script.match(/[\s\S]{1,3500}/g)
+
+    for (const chunk of chunks) {
+      await bot.sendMessage(chatId, chunk)
+    }
+
+    await bot.sendMessage(chatId, 'DONE ✅')
+
+  } catch (err) {
+    console.error(err)
+    bot.sendMessage(chatId, 'Error running system')
+  }
+}
 
 const PORT = process.env.PORT || 3000
 
