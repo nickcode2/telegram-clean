@@ -25,118 +25,96 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 })
 
-const userStates = {}
-
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id
   const text = msg.text
 
   if (!text) return
 
-  console.log('MSG:', text)
-
-  // STEP 1
   if (text === 'do it') {
-    bot.sendMessage(chatId, 'Generating full system...')
-    runSystem(chatId)
+    bot.sendMessage(chatId, 'Creating real 10s pipeline...')
+    runTest(chatId)
     return
   }
 
   bot.sendMessage(chatId, 'Send do it')
 })
 
-async function runSystem(chatId) {
+async function runTest(chatId) {
   try {
-    // 🔥 STEP 1: GENERATE THEME
+    // 🔥 STEP 1: THEME
     const themeRes = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'user',
-          content: `
-Generate ONE unique YouTube documentary theme.
-
-Style:
-Massive engineering, megaprojects, hidden infrastructure, underground systems, military tech.
-
-Return ONLY:
-THEME: <short title>
-`
+          content: 'Create a short theme about massive engineering or megaprojects'
         }
       ]
     })
 
     const theme = themeRes.choices[0].message.content
+    await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
-    await bot.sendMessage(chatId, theme)
-
-    // 🔥 STEP 2: GENERATE FULL SCRIPT (50 scenes)
-    const scriptRes = await openai.chat.completions.create({
+    // 🔥 STEP 2: SCENE PROMPTS
+    const sceneRes = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'user',
           content: `
-Create a full 50-scene YouTube documentary.
+Create 2 scenes for a 10-second video.
 
-Use this theme:
-${theme}
+Theme: ${theme}
 
-RULES:
-- 50 scenes total
-- scenes 1–20: fast, ~22 words
-- scenes 21–50: slower, ~32 words
+Each scene:
+- short narration
+- 1 image prompt (realistic, massive scale)
+- 1 video movement
 
-FOR EACH SCENE INCLUDE:
-
-Scene number
-
-Narration
-
-Image Prompt 1 (different camera angle)
-
-Image Prompt 2 (different camera angle)
-
-Video Prompt (camera movement, no repetition)
-
-STYLE:
-- massive scale
-- realistic
-- engineering focused
-- no fantasy
-- always include people for scale
-
-CAMERA ANGLES ROTATE:
-top down aerial
-low ground
-side wide
-diagonal high
-inside perspective
-vertical shaft
-elevated platform
-extreme wide
-
-RETURN CLEAN TEXT
+Return clean.
 `
         }
       ]
     })
 
-    const script = scriptRes.choices[0].message.content
+    const scenes = sceneRes.choices[0].message.content
+    await bot.sendMessage(chatId, scenes)
 
-    // 🔥 SEND IN CHUNKS (Telegram limit)
-    const chunks = script.match(/[\s\S]{1,3500}/g)
+    // 🔥 STEP 3: SIMULATE IMAGE GENERATION
+    await bot.sendMessage(chatId, 'Generating image 1...')
+    await delay(1500)
 
-    for (const chunk of chunks) {
-      await bot.sendMessage(chatId, chunk)
-    }
+    const image1 = 'https://via.placeholder.com/512?text=Scene+1'
+    await bot.sendPhoto(chatId, image1)
 
-    await bot.sendMessage(chatId, 'DONE ✅')
+    await bot.sendMessage(chatId, 'Generating image 2...')
+    await delay(1500)
+
+    const image2 = 'https://via.placeholder.com/512?text=Scene+2'
+    await bot.sendPhoto(chatId, image2)
+
+    // 🔥 STEP 4: SIMULATE VIDEO GENERATION
+    await bot.sendMessage(chatId, 'Generating 5s video 1...')
+    await delay(2000)
+
+    await bot.sendMessage(chatId, 'Generating 5s video 2...')
+    await delay(2000)
+
+    // 🔥 STEP 5: FINAL OUTPUT
+    await bot.sendMessage(chatId, 'Merging clips...')
+    await delay(2000)
+
+    await bot.sendMessage(chatId, '🎬 Final 10-second video ready (simulation)')
 
   } catch (err) {
     console.error(err)
-    bot.sendMessage(chatId, 'Error running system')
+    bot.sendMessage(chatId, 'Error in pipeline')
   }
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 const PORT = process.env.PORT || 3000
