@@ -89,7 +89,7 @@ async function generateImage(promptText) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        version: "c221b2b8ef527988ecf4b6a6cde2baf9d1d6dbe2f5d5a63d315ff78eaefdd8af",
+        model: "black-forest-labs/flux-2-max",
         input: {
           prompt: promptText,
           aspect_ratio: "16:9"
