@@ -32,7 +32,7 @@ bot.on('message', async (msg) => {
   if (!text) return
 
   if (text === 'do it') {
-    bot.sendMessage(chatId, 'Creating real 10s pipeline...')
+    bot.sendMessage(chatId, 'Starting 10s pipeline...')
     runTest(chatId)
     return
   }
@@ -42,74 +42,70 @@ bot.on('message', async (msg) => {
 
 async function runTest(chatId) {
   try {
-    // 🔥 STEP 1: THEME
+    // STEP 1: THEME
     const themeRes = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'user',
-          content: 'Create a short theme about massive engineering or megaprojects'
-        }
+        { role: 'user', content: 'Create a short theme about megaprojects' }
       ]
     })
 
     const theme = themeRes.choices[0].message.content
     await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
-    // 🔥 STEP 2: SCENE PROMPTS
-    const sceneRes = await openai.chat.completions.create({
+    // STEP 2: SCENE 1
+    await bot.sendMessage(chatId, 'Creating scene 1...')
+
+    const scene1Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'user',
-          content: `
-Create 2 scenes for a 10-second video.
-
-Theme: ${theme}
-
-Each scene:
-- short narration
-- 1 image prompt (realistic, massive scale)
-- 1 video movement
-
-Return clean.
-`
+          content: `Create ONE scene for a 5-second video based on: ${theme}. Include narration + image prompt + video movement`
         }
       ]
     })
 
-    const scenes = sceneRes.choices[0].message.content
-    await bot.sendMessage(chatId, scenes)
+    const scene1 = scene1Res.choices[0].message.content
+    await bot.sendMessage(chatId, scene1)
 
-    // 🔥 STEP 3: SIMULATE IMAGE GENERATION
+    // STEP 3: SCENE 2
+    await bot.sendMessage(chatId, 'Creating scene 2...')
+
+    const scene2Res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'user',
+          content: `Create another DIFFERENT scene for a 5-second video based on: ${theme}. Include narration + image prompt + video movement`
+        }
+      ]
+    })
+
+    const scene2 = scene2Res.choices[0].message.content
+    await bot.sendMessage(chatId, scene2)
+
+    // STEP 4: IMAGES
     await bot.sendMessage(chatId, 'Generating image 1...')
-    await delay(1500)
-
-    const image1 = 'https://via.placeholder.com/512?text=Scene+1'
-    await bot.sendPhoto(chatId, image1)
+    await delay(1000)
+    await bot.sendPhoto(chatId, 'https://via.placeholder.com/512?text=Scene+1')
 
     await bot.sendMessage(chatId, 'Generating image 2...')
-    await delay(1500)
+    await delay(1000)
+    await bot.sendPhoto(chatId, 'https://via.placeholder.com/512?text=Scene+2')
 
-    const image2 = 'https://via.placeholder.com/512?text=Scene+2'
-    await bot.sendPhoto(chatId, image2)
-
-    // 🔥 STEP 4: SIMULATE VIDEO GENERATION
-    await bot.sendMessage(chatId, 'Generating 5s video 1...')
+    // STEP 5: VIDEO SIM
+    await bot.sendMessage(chatId, 'Generating videos...')
     await delay(2000)
 
-    await bot.sendMessage(chatId, 'Generating 5s video 2...')
+    await bot.sendMessage(chatId, 'Merging...')
     await delay(2000)
 
-    // 🔥 STEP 5: FINAL OUTPUT
-    await bot.sendMessage(chatId, 'Merging clips...')
-    await delay(2000)
-
-    await bot.sendMessage(chatId, '🎬 Final 10-second video ready (simulation)')
+    await bot.sendMessage(chatId, '🎬 10s video ready (simulation)')
 
   } catch (err) {
-    console.error(err)
-    bot.sendMessage(chatId, 'Error in pipeline')
+    console.error('ERROR:', err)
+    bot.sendMessage(chatId, 'Error occurred')
   }
 }
 
