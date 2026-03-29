@@ -84,7 +84,6 @@ async function runTest(chatId) {
 }
 
 async function generateImage(promptText) {
-  // STEP 1: create prediction
   const start = await fetch('https://api.replicate.com/v1/predictions', {
     method: 'POST',
     headers: {
@@ -92,7 +91,7 @@ async function generateImage(promptText) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: "black-forest-labs/flux-2-max",
+      version: "c221b2b8ef527988ecf4b6a6cde2baf9d1d6dbe2f5d5a63d315ff78eaefdd8af",
       input: {
         prompt: promptText
       }
@@ -101,8 +100,13 @@ async function generateImage(promptText) {
 
   const prediction = await start.json()
 
-  // STEP 2: wait until done
+  if (!prediction.id) {
+    console.log(prediction)
+    throw new Error('Replicate start failed')
+  }
+
   let result
+
   while (true) {
     await new Promise(r => setTimeout(r, 2000))
 
@@ -119,6 +123,10 @@ async function generateImage(promptText) {
       console.log(result)
       throw new Error('Replicate failed')
     }
+  }
+
+  if (!result.output || !result.output.length) {
+    throw new Error('No image output')
   }
 
   return result.output[0]
