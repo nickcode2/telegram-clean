@@ -20,11 +20,13 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const bot = new TelegramBot(process.env.BOT_TOKEN)
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+})
 
 const userStates = {}
 
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
   try {
     bot.processUpdate(req.body)
     res.sendStatus(200)
@@ -57,14 +59,15 @@ bot.on('message', async (msg) => {
         messages: [
           {
             role: 'user',
-            content: 'Create ONE YouTube documentary theme about massive engineering, hidden infrastructure, or megaprojects. Return only one short title.'
+            content:
+              'Create ONE YouTube documentary theme about massive engineering, hidden infrastructure, or megaprojects. Return only one short title.'
           }
         ]
       })
 
-      const theme = response.choices[0].message.content
+      const result = response.choices[0].message.content
 
-      bot.sendMessage(chatId, `🔥 THEME:\n${theme}`)
+      bot.sendMessage(chatId, result)
 
     } catch (err) {
       console.error(err)
