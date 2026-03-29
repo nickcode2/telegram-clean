@@ -19,7 +19,10 @@ if (!process.env.OPENAI_API_KEY) {
   process.exit(1)
 }
 
-const bot = new TelegramBot(process.env.BOT_TOKEN)
+const bot = new TelegramBot(process.env.BOT_TOKEN, {
+  webHook: true
+})
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 })
@@ -31,12 +34,14 @@ app.post('/webhook', async (req, res) => {
     bot.processUpdate(req.body)
     res.sendStatus(200)
   } catch (err) {
-    console.error(err)
+    console.error('WEBHOOK ERROR:', err)
     res.sendStatus(200)
   }
 })
 
 bot.on('message', async (msg) => {
+  console.log('MESSAGE RECEIVED:', msg.text)
+
   const chatId = msg.chat.id
   const text = msg.text
 
@@ -70,7 +75,7 @@ bot.on('message', async (msg) => {
       bot.sendMessage(chatId, result)
 
     } catch (err) {
-      console.error(err)
+      console.error('OPENAI ERROR:', err)
       bot.sendMessage(chatId, 'Error generating theme')
     }
 
@@ -83,5 +88,5 @@ bot.on('message', async (msg) => {
 const PORT = process.env.PORT || 3000
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('running')
+  console.log('running on port', PORT)
 })
