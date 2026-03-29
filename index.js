@@ -8,7 +8,7 @@ app.get('/', (req, res) => {
   res.send('OK')
 })
 
-const bot = new TelegramBot(process.env.BOT_TOKEN)
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false })
 
 const userStates = {}
 
