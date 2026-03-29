@@ -9,24 +9,24 @@ if (!process.env.BOT_TOKEN) {
 
 const app = express()
 
-// Railway needs a server running
+// Railway needs a running server
 app.get('/', (req, res) => {
   res.send('OK')
 })
 
-// 🔥 POLLING MODE (no webhook headaches)
+// 🔥 polling mode (stable)
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
 // simple memory
 const userStates = {}
 
-bot.on('message', (msg) => {
-  console.log('MSG:', msg.text)
-
+bot.on('message', async (msg) => {
   if (!msg.text) return
 
   const chatId = msg.chat.id
   const text = msg.text.toLowerCase()
+
+  console.log('MSG:', text)
 
   // step 1
   if (text === 'do it') {
@@ -38,12 +38,23 @@ bot.on('message', (msg) => {
   // step 2
   if (userStates[chatId] === 'waiting_for_theme') {
     userStates[chatId] = null
+
+    const theme = text
+
     bot.sendMessage(chatId, 'Ok, working on it...')
+
+    console.log('THEME RECEIVED:', theme)
+
+    // 🚀 FAKE PROCESS (next we replace this with real automation)
+    setTimeout(() => {
+      bot.sendMessage(chatId, `Done with theme: ${theme}`)
+    }, 3000)
+
     return
   }
 
   // default
-  bot.sendMessage(chatId, 'Send "do it"')
+  bot.sendMessage(chatId, 'Send do it')
 })
 
 // start server
