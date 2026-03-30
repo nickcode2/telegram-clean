@@ -21,13 +21,13 @@ bot.on('message', async (msg) => {
 
   if (!text) return
 
-  if (text === 'do it') {
-    bot.sendMessage(chatId, 'Starting 10s pipeline...')
+  if (text.trim().toLowerCase() === 'do it') {
+    await bot.sendMessage(chatId, 'Starting 10s pipeline...')
     runTest(chatId)
     return
   }
 
-  bot.sendMessage(chatId, 'Send do it')
+  await bot.sendMessage(chatId, 'Send do it')
 })
 
 async function runTest(chatId) {
@@ -39,10 +39,9 @@ async function runTest(chatId) {
       ]
     })
 
-    const theme = themeRes.choices[0].message.content
+    const theme = themeRes.choices[0].message.content.trim()
     await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
-    // SCENE 1 IMAGE PROMPT ONLY
     const imgPrompt1Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -50,10 +49,9 @@ async function runTest(chatId) {
       ]
     })
 
-    const imgPrompt1 = imgPrompt1Res.choices[0].message.content
+    const imgPrompt1 = imgPrompt1Res.choices[0].message.content.trim()
     await bot.sendMessage(chatId, `Prompt 1:\n${imgPrompt1}`)
 
-    // SCENE 2 IMAGE PROMPT ONLY
     const imgPrompt2Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -61,7 +59,7 @@ async function runTest(chatId) {
       ]
     })
 
-    const imgPrompt2 = imgPrompt2Res.choices[0].message.content
+    const imgPrompt2 = imgPrompt2Res.choices[0].message.content.trim()
     await bot.sendMessage(chatId, `Prompt 2:\n${imgPrompt2}`)
 
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
@@ -76,7 +74,7 @@ async function runTest(chatId) {
 
   } catch (err) {
     console.error('MAIN ERROR:', err)
-    bot.sendMessage(chatId, 'Error occurred')
+    await bot.sendMessage(chatId, 'Error occurred')
   }
 }
 
@@ -89,7 +87,7 @@ async function generateImage(promptText) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: "black-forest-labs/flux-2-max",
+        version: "f1d7b0f2c3c4f3a6e6a7d5b7d6f6e7f8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4", // ✅ REQUIRED
         input: {
           prompt: promptText,
           aspect_ratio: "16:9"
@@ -100,7 +98,9 @@ async function generateImage(promptText) {
     const prediction = await start.json()
     console.log('START:', prediction)
 
-    if (!prediction.id) throw new Error('No prediction id')
+    if (!prediction.id) {
+      throw new Error(JSON.stringify(prediction))
+    }
 
     let result
 
@@ -133,3 +133,8 @@ async function generateImage(promptText) {
     throw err
   }
 }
+
+const PORT = process.env.PORT || 3000
+app.listen(PORT, () => {
+  console.log('Server running')
+})
