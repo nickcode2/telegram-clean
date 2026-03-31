@@ -1,143 +1,105 @@
-const express = require('express')
-const TelegramBot = require('node-telegram-bot-api')
-const OpenAI = require('openai')
-const Replicate = require('replicate')
-const axios = require('axios')
-
-const app = express()
-app.use(express.json())
-
-app.get('/', (req, res) => {
-  res.send('OK')
-})
+import TelegramBot from "node-telegram-bot-api"
+import Replicate from "replicate"
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
-
 const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
+  auth: process.env.REPLICATE_API_TOKEN,
 })
 
-bot.on('message', async (msg) => {
+bot.on("message", async (msg) => {
   const chatId = msg.chat.id
   const text = msg.text
 
-  if (!text) return
+  if (text !== "do it") return
 
-  if (text.trim().toLowerCase() === 'do it') {
-    await bot.sendMessage(chatId, 'Starting 10s pipeline...')
-    runTest(chatId)
-    return
-  }
-
-  await bot.sendMessage(chatId, 'Send do it')
-})
-
-async function runTest(chatId) {
   try {
-    const themeRes = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'user', content: 'Create a short megaproject theme. Only title.' }
-      ]
-    })
+    await bot.sendMessage(chatId, "🚀 Starting 10s pipeline...")
 
-    const theme = themeRes.choices[0].message.content.trim()
-    await bot.sendMessage(chatId, `THEME:\n${theme}`)
+    // =========================
+    // 1. PROMPTS
+    // =========================
 
-    const prompt1 = await getImagePrompt(theme)
-    const prompt2 = await getImagePrompt(theme)
+    const prompts = [
+      "A cinematic futuristic city under construction at sunset, engineers observing holographic blueprints, ultra realistic",
+      "A massive futuristic megacity with flying vehicles and glowing architecture at dusk, ultra realistic",
+    ]
 
-    await bot.sendMessage(chatId, `Prompt 1:\n${prompt1}`)
-    await bot.sendMessage(chatId, `Prompt 2:\n${prompt2}`)
+    let images = []
 
-    // IMAGE 1
-    await bot.sendMessage(chatId, '🖼 Generating image 1...')
-    const img1 = await generateImage(prompt1)
-    await sendImage(chatId, img1)
+    // =========================
+    // 2. GENERATE IMAGES
+    // =========================
 
-    // IMAGE 2
-    await bot.sendMessage(chatId, '🖼 Generating image 2...')
-    const img2 = await generateImage(prompt2)
-    await sendImage(chatId, img2)
+    for (let i = 0; i < prompts.length; i++) {
+      await bot.sendMessage(chatId, `🖼 Generating image ${i + 1}...`)
 
-    await bot.sendMessage(chatId, '🎬 Generating video 1...')
-    const video1 = await generateVideo(img1, prompt1)
-    await bot.sendVideo(chatId, video1)
+      const output = await replicate.run(
+        "black-forest-labs/flux-2-max",
+        {
+          input: {
+            prompt: prompts[i],
+            aspect_ratio: "16:9",
+          },
+        }
+      )
 
-    await bot.sendMessage(chatId, '🎬 Generating video 2...')
-    const video2 = await generateVideo(img2, prompt2)
-    await bot.sendVideo(chatId, video2)
+      const imageUrl = Array.isArray(output) ? output[0] : output
 
-    await bot.sendMessage(chatId, '✅ DONE')
+      images.push(imageUrl)
+
+      await bot.sendPhoto(chatId, imageUrl)
+    }
+
+    await bot.sendMessage(chatId, "✅ Images done")
+
+    // =========================
+    // 3. GENERATE VIDEOS (KLING)
+    // =========================
+
+    let videos = []
+
+    for (let i = 0; i < images.length; i++) {
+      await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
+
+      const output = await replicate.run(
+        "kwaivgi/kling-v2.1",
+        {
+          input: {
+            prompt: "cinematic motion, smooth camera movement",
+            start_image: images[i],
+          },
+        }
+      )
+
+      const videoUrl = Array.isArray(output) ? output[0] : output
+
+      videos.push(videoUrl)
+
+      // 🚨 FIXED: send URL directly (NO BUFFER)
+      await bot.sendVideo(chatId, videoUrl)
+    }
+
+    await bot.sendMessage(chatId, "🎉 Videos done")
 
   } catch (err) {
     console.error(err)
-    await bot.sendMessage(chatId, '❌ ERROR')
+    await bot.sendMessage(chatId, "❌ ERROR: " + err.message)
   }
-}
+})
 
-async function getImagePrompt(theme) {
-  const res = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'user', content: `Create cinematic image prompt about ${theme}` }
-    ]
-  })
+// =========================
+// SERVER (Railway needs this)
+// =========================
 
-  return res.choices[0].message.content.trim()
-}
-
-async function generateImage(promptText) {
-  const output = await replicate.run(
-    'black-forest-labs/flux-2-pro',
-    {
-      input: {
-        prompt: promptText,
-        aspect_ratio: '16:9'
-      }
-    }
-  )
-
-  return Array.isArray(output) ? output[0] : output
-}
-
-async function generateVideo(imageUrl, promptText) {
-  const output = await replicate.run(
-    'kwaivgi/kling-v2.6',
-    {
-      input: {
-        prompt: promptText,
-        start_image: imageUrl
-      }
-    }
-  )
-
-  return Array.isArray(output) ? output[0] : output
-}
-
-async function sendImage(chatId, imageUrl) {
-  const response = await axios.get(imageUrl, {
-    responseType: 'arraybuffer'
-  })
-
-  const buffer = Buffer.from(response.data)
-
-  await bot.sendPhoto(
-    chatId,
-    buffer,
-    {},
-    {
-      filename: 'image.webp',
-      contentType: 'image/webp'
-    }
-  )
-}
+import express from "express"
+const app = express()
 
 const PORT = process.env.PORT || 3000
+
+app.get("/", (req, res) => {
+  res.send("Bot is running")
+})
+
 app.listen(PORT, () => {
-  console.log('Server running')
+  console.log("Server running")
 })
