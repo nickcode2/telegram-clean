@@ -56,24 +56,20 @@ async function runTest(chatId) {
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
     const img1 = await generateImage(imgPrompt1)
 
-    if (!img1) throw new Error('Image 1 invalid')
-
-    await bot.sendMessage(chatId, img1) // DEBUG FIRST
-    await bot.sendPhoto(chatId, { url: img1 })
+    await bot.sendMessage(chatId, img1)
+    await bot.sendPhoto(chatId, img1)
 
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
     const img2 = await generateImage(imgPrompt2)
 
-    if (!img2) throw new Error('Image 2 invalid')
-
-    await bot.sendMessage(chatId, img2) // DEBUG FIRST
-    await bot.sendPhoto(chatId, { url: img2 })
+    await bot.sendMessage(chatId, img2)
+    await bot.sendPhoto(chatId, img2)
 
     await bot.sendMessage(chatId, '✅ Images done')
 
   } catch (err) {
     console.error('MAIN ERROR:', err)
-    await bot.sendMessage(chatId, `❌ ERROR:\n${err.message || err}`)
+    await bot.sendMessage(chatId, `❌ ERROR:\n${err.message}`)
   }
 }
 
@@ -102,38 +98,29 @@ async function generateImage(promptText) {
 
     console.log("RAW OUTPUT:", output)
 
-    // 🔥 normalize EVERYTHING into string URL
+    // 🔥 REAL FIX HERE
 
-    let url = null
+    // flux returns object with URL hidden inside
 
-    if (typeof output === 'string') {
-      url = output
-    }
+    if (output && output instanceof Object) {
 
-    else if (Array.isArray(output)) {
-      url = output[0]
-    }
-
-    else if (output && typeof output === 'object') {
-
-      if (output.url && typeof output.url === 'function') {
-        url = output.url()
+      // MOST COMMON CASE
+      if (output.output && Array.isArray(output.output)) {
+        return output.output[0]
       }
 
-      else if (output.url && typeof output.url === 'string') {
-        url = output.url
+      // sometimes direct array
+      if (Array.isArray(output)) {
+        return output[0]
       }
 
-      else if (output[0]) {
-        url = output[0]
+      // sometimes string
+      if (typeof output === 'string') {
+        return output
       }
     }
 
-    if (!url || typeof url !== 'string') {
-      throw new Error('No valid image URL extracted')
-    }
-
-    return url
+    throw new Error('Replicate returned unknown format')
 
   } catch (err) {
     console.error('IMAGE ERROR:', err)
