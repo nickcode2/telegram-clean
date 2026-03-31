@@ -1,6 +1,7 @@
 const express = require('express')
 const TelegramBot = require('node-telegram-bot-api')
 const OpenAI = require('openai')
+const Replicate = require('replicate')
 
 const app = express()
 app.use(express.json())
@@ -13,6 +14,10 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
+})
+
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN
 })
 
 bot.on('message', async (msg) => {
@@ -35,7 +40,10 @@ async function runTest(chatId) {
     const themeRes = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'user', content: 'Create a short megaproject documentary theme. Return only title.' }
+        {
+          role: 'user',
+          content: 'Create a short megaproject documentary theme. Return only title.'
+        }
       ]
     })
 
@@ -45,7 +53,10 @@ async function runTest(chatId) {
     const imgPrompt1Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'user', content: `Create ONE ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.` }
+        {
+          role: 'user',
+          content: `Create ONE ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.`
+        }
       ]
     })
 
@@ -55,7 +66,10 @@ async function runTest(chatId) {
     const imgPrompt2Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'user', content: `Create another DIFFERENT ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.` }
+        {
+          role: 'user',
+          content: `Create another DIFFERENT ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.`
+        }
       ]
     })
 
@@ -74,59 +88,37 @@ async function runTest(chatId) {
 
   } catch (err) {
     console.error('MAIN ERROR:', err)
-    await bot.sendMessage(chatId, 'Error occurred')
+    await bot.sendMessage(chatId, `❌ ERROR:\n${err.message || err}`)
   }
 }
 
 async function generateImage(promptText) {
   try {
-    const start = await fetch('https://api.replicate.com/v1/predictions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        version: "f1d7b0f2c3c4f3a6e6a7d5b7d6f6e7f8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4", // ✅ REQUIRED
+    const output = await replicate.run(
+      "black-forest-labs/flux-2-pro",
+      {
         input: {
           prompt: promptText,
           aspect_ratio: "16:9"
         }
-      })
-    })
+      }
+    )
 
-    const prediction = await start.json()
-    console.log('START:', prediction)
+    console.log("OUTPUT:", output)
 
-    if (!prediction.id) {
-      throw new Error(JSON.stringify(prediction))
+    if (!output) {
+      throw new Error("No output")
     }
 
-    let result
-
-    while (true) {
-      await new Promise(r => setTimeout(r, 2000))
-
-      const check = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
-        headers: {
-          Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`
-        }
-      })
-
-      result = await check.json()
-      console.log('STATUS:', result.status)
-
-      if (result.status === 'succeeded') break
-      if (result.status === 'failed') throw new Error(JSON.stringify(result))
+    if (typeof output === 'object' && output.url) {
+      return output.url()
     }
 
-    console.log('FINAL:', result)
+    if (Array.isArray(output)) {
+      return output[0]
+    }
 
-    if (!result.output) throw new Error('No output')
-
-    return Array.isArray(result.output)
-      ? result.output[0]
-      : result.output
+    return output
 
   } catch (err) {
     console.error('IMAGE ERROR:', err)
