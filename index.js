@@ -1,7 +1,6 @@
 const express = require('express')
 const TelegramBot = require('node-telegram-bot-api')
 const OpenAI = require('openai')
-const Replicate = require('replicate')
 const axios = require('axios')
 
 const app = express()
@@ -17,23 +16,19 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 })
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-})
-
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id
   const text = msg.text
 
   if (!text) return
 
-  if (text.trim().toLowerCase() === 'do it') {
-    await bot.sendMessage(chatId, 'Starting 10s pipeline...')
+  if (text === 'do it') {
+    bot.sendMessage(chatId, 'Starting 10s pipeline...')
     runTest(chatId)
     return
   }
 
-  await bot.sendMessage(chatId, 'Send do it')
+  bot.sendMessage(chatId, 'Send do it')
 })
 
 async function runTest(chatId) {
@@ -45,36 +40,44 @@ async function runTest(chatId) {
       ]
     })
 
-    const theme = themeRes.choices[0].message.content.trim()
+    const theme = themeRes.choices[0].message.content
     await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
-    const imgPrompt1 = await generatePrompt(theme)
-    const imgPrompt2 = await generatePrompt(theme)
+    const prompt1 = await getImagePrompt(theme)
+    await bot.sendMessage(chatId, `Prompt 1:\n${prompt1}`)
 
-    await bot.sendMessage(chatId, `Prompt 1:\n${imgPrompt1}`)
-    await bot.sendMessage(chatId, `Prompt 2:\n${imgPrompt2}`)
+    const prompt2 = await getImagePrompt(theme)
+    await bot.sendMessage(chatId, `Prompt 2:\n${prompt2}`)
 
+    // IMAGE 1
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
-    const img1 = await generateImage(imgPrompt1)
+    const img1 = await generateImage(prompt1)
+    await bot.sendPhoto(chatId, img1)
 
-    await bot.sendMessage(chatId, `DEBUG URL:\n${img1}`)
-    await sendImage(chatId, img1)
+    // VIDEO 1
+    await bot.sendMessage(chatId, '🎬 Generating video 1...')
+    const vid1 = await generateKlingVideo(img1)
+    await bot.sendVideo(chatId, vid1)
 
+    // IMAGE 2
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
-    const img2 = await generateImage(imgPrompt2)
+    const img2 = await generateImage(prompt2)
+    await bot.sendPhoto(chatId, img2)
 
-    await bot.sendMessage(chatId, `DEBUG URL:\n${img2}`)
-    await sendImage(chatId, img2)
+    // VIDEO 2
+    await bot.sendMessage(chatId, '🎬 Generating video 2...')
+    const vid2 = await generateKlingVideo(img2)
+    await bot.sendVideo(chatId, vid2)
 
-    await bot.sendMessage(chatId, '✅ Images done')
+    await bot.sendMessage(chatId, '✅ 10s pipeline done')
 
   } catch (err) {
     console.error('MAIN ERROR:', err)
-    await bot.sendMessage(chatId, `❌ ERROR:\n${err.message}`)
+    bot.sendMessage(chatId, 'Error occurred')
   }
 }
 
-async function generatePrompt(theme) {
+async function getImagePrompt(theme) {
   const res = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
@@ -82,47 +85,92 @@ async function generatePrompt(theme) {
     ]
   })
 
-  return res.choices[0].message.content.trim()
+  return res.choices[0].message.content
 }
 
 async function generateImage(promptText) {
-  const output = await replicate.run(
-    "black-forest-labs/flux-2-pro",
+  const start = await axios.post(
+    'https://api.replicate.com/v1/predictions',
     {
+      version: "black-forest-labs/flux-2-max",
       input: {
         prompt: promptText,
         aspect_ratio: "16:9"
       }
+    },
+    {
+      headers: {
+        Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
     }
   )
 
-  if (Array.isArray(output)) {
-    const first = output[0]
-    if (typeof first.url === 'function') return first.url()
-    return first
+  let prediction = start.data
+
+  while (prediction.status !== 'succeeded') {
+    await new Promise(r => setTimeout(r, 2000))
+
+    const check = await axios.get(
+      `https://api.replicate.com/v1/predictions/${prediction.id}`,
+      {
+        headers: {
+          Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`
+        }
+      }
+    )
+
+    prediction = check.data
+
+    if (prediction.status === 'failed') {
+      throw new Error('Image failed')
+    }
   }
 
-  if (typeof output === 'string') return output
-
-  if (output.url && typeof output.url === 'function') return output.url()
-
-  throw new Error('Invalid replicate output')
+  return prediction.output[0]
 }
 
-async function sendImage(chatId, imageUrl) {
-  try {
-    const response = await axios.get(imageUrl, {
-      responseType: 'arraybuffer'
-    })
+async function generateKlingVideo(imageUrl) {
+  const start = await axios.post(
+    'https://api.replicate.com/v1/predictions',
+    {
+      version: "kwaivgi/kling-v1",
+      input: {
+        image: imageUrl,
+        prompt: "cinematic motion, realistic movement, camera slowly pushes forward",
+        duration: 5
+      }
+    },
+    {
+      headers: {
+        Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  )
 
-    const buffer = Buffer.from(response.data, 'binary')
+  let prediction = start.data
 
-    await bot.sendPhoto(chatId, buffer)
+  while (prediction.status !== 'succeeded') {
+    await new Promise(r => setTimeout(r, 3000))
 
-  } catch (err) {
-    console.error('SEND IMAGE ERROR:', err)
-    await bot.sendMessage(chatId, 'Failed to send image')
+    const check = await axios.get(
+      `https://api.replicate.com/v1/predictions/${prediction.id}`,
+      {
+        headers: {
+          Authorization: `Token ${process.env.REPLICATE_API_TOKEN}`
+        }
+      }
+    )
+
+    prediction = check.data
+
+    if (prediction.status === 'failed') {
+      throw new Error('Video failed')
+    }
   }
+
+  return prediction.output[0]
 }
 
 const PORT = process.env.PORT || 3000
