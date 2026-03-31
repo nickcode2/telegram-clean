@@ -96,38 +96,30 @@ async function generateImage(promptText) {
       }
     )
 
-    console.log('RAW OUTPUT:', JSON.stringify(output, null, 2))
+    console.log('RAW OUTPUT:', output)
 
-    // 🔥 HANDLE ALL CASES
+    // 🔥 CRITICAL FIX HERE
 
-    // case 1: string
-    if (typeof output === 'string') {
-      return output
-    }
+    if (typeof output === 'string') return output
 
-    // case 2: array
     if (Array.isArray(output)) {
-      return output[0]
+      const first = output[0]
+
+      // if it's a file object
+      if (first && typeof first.url === 'function') {
+        return first.url()
+      }
+
+      return first
     }
 
-    // case 3: object with url
-    if (output.url) {
+    // if single object
+    if (output && typeof output.url === 'function') {
+      return output.url()
+    }
+
+    if (output && output.url) {
       return output.url
-    }
-
-    // case 4: object with output array
-    if (output.output && Array.isArray(output.output)) {
-      return output.output[0]
-    }
-
-    // case 5: object with images
-    if (output.images && Array.isArray(output.images)) {
-      return output.images[0]
-    }
-
-    // case 6: object with data
-    if (output.data && Array.isArray(output.data)) {
-      return output.data[0].url
     }
 
     throw new Error('Replicate returned unknown format')
