@@ -56,36 +56,41 @@ bot.on("message", async (msg) => {
     // 3. GENERATE VIDEOS (KLING)
     // =========================
 
-    let videos = []
+   let videos = []
 
-    for (let i = 0; i < images.length; i++) {
-      await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
+for (let i = 0; i < images.length; i++) {
+  try {
+    await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
 
-      const output = await replicate.run(
-        "kwaivgi/kling-v2.6",
-        {
-          input: {
-            prompt: "cinematic motion, smooth camera movement",
-            start_image: images[i],
-          },
-        }
-      )
+    const output = await replicate.run(
+      "kwaivgi/kling-v2.6",
+      {
+        input: {
+          prompt: "cinematic camera movement, futuristic city, peaceful atmosphere, no violence, no conflict",
+          start_image: images[i],
+        },
+      }
+    )
 
-      const videoUrl = Array.isArray(output) ? output[0] : output
+    const videoUrl = Array.isArray(output) ? output[0] : output
 
-      videos.push(videoUrl)
+    videos.push(videoUrl)
 
-      // 🚨 FIXED: send URL directly (NO BUFFER)
-      await bot.sendVideo(chatId, videoUrl)
-    }
-
-    await bot.sendMessage(chatId, "🎉 Videos done")
+    await bot.sendVideo(chatId, videoUrl)
 
   } catch (err) {
-    console.error(err)
-    await bot.sendMessage(chatId, "❌ ERROR: " + err.message)
+    console.log("VIDEO FAILED:", i, err.message)
+
+    await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed, skipping...`)
+
+    // fallback (keeps pipeline stable)
+    videos.push(images[i])
+
+    continue
   }
-})
+}
+
+await bot.sendMessage(chatId, "🎉 Videos done")
 
 // =========================
 // SERVER (Railway needs this)
