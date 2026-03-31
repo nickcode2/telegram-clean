@@ -2,6 +2,7 @@ const express = require('express')
 const TelegramBot = require('node-telegram-bot-api')
 const OpenAI = require('openai')
 const Replicate = require('replicate')
+const axios = require('axios')
 
 const app = express()
 app.use(express.json())
@@ -57,13 +58,13 @@ async function runTest(chatId) {
     const img1 = await generateImage(imgPrompt1)
 
     await bot.sendMessage(chatId, `DEBUG URL:\n${img1}`)
-    await bot.sendPhoto(chatId, img1)
+    await sendImage(chatId, img1)
 
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
     const img2 = await generateImage(imgPrompt2)
 
     await bot.sendMessage(chatId, `DEBUG URL:\n${img2}`)
-    await bot.sendPhoto(chatId, img2)
+    await sendImage(chatId, img2)
 
     await bot.sendMessage(chatId, '✅ Images done')
 
@@ -85,48 +86,42 @@ async function generatePrompt(theme) {
 }
 
 async function generateImage(promptText) {
+  const output = await replicate.run(
+    "black-forest-labs/flux-2-pro",
+    {
+      input: {
+        prompt: promptText,
+        aspect_ratio: "16:9"
+      }
+    }
+  )
+
+  if (Array.isArray(output)) {
+    const first = output[0]
+    if (typeof first.url === 'function') return first.url()
+    return first
+  }
+
+  if (typeof output === 'string') return output
+
+  if (output.url && typeof output.url === 'function') return output.url()
+
+  throw new Error('Invalid replicate output')
+}
+
+async function sendImage(chatId, imageUrl) {
   try {
-    const output = await replicate.run(
-      "black-forest-labs/flux-2-pro",
-      {
-        input: {
-          prompt: promptText,
-          aspect_ratio: "16:9"
-        }
-      }
-    )
+    const response = await axios.get(imageUrl, {
+      responseType: 'arraybuffer'
+    })
 
-    console.log('RAW OUTPUT:', output)
+    const buffer = Buffer.from(response.data, 'binary')
 
-    // 🔥 CRITICAL FIX HERE
-
-    if (typeof output === 'string') return output
-
-    if (Array.isArray(output)) {
-      const first = output[0]
-
-      // if it's a file object
-      if (first && typeof first.url === 'function') {
-        return first.url()
-      }
-
-      return first
-    }
-
-    // if single object
-    if (output && typeof output.url === 'function') {
-      return output.url()
-    }
-
-    if (output && output.url) {
-      return output.url
-    }
-
-    throw new Error('Replicate returned unknown format')
+    await bot.sendPhoto(chatId, buffer)
 
   } catch (err) {
-    console.error('IMAGE ERROR:', err)
-    throw err
+    console.error('SEND IMAGE ERROR:', err)
+    await bot.sendMessage(chatId, 'Failed to send image')
   }
 }
 
