@@ -56,13 +56,13 @@ async function runTest(chatId) {
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
     const img1 = await generateImage(imgPrompt1)
 
-    await bot.sendMessage(chatId, img1)
+    await bot.sendMessage(chatId, `DEBUG URL:\n${img1}`)
     await bot.sendPhoto(chatId, img1)
 
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
     const img2 = await generateImage(imgPrompt2)
 
-    await bot.sendMessage(chatId, img2)
+    await bot.sendMessage(chatId, `DEBUG URL:\n${img2}`)
     await bot.sendPhoto(chatId, img2)
 
     await bot.sendMessage(chatId, '✅ Images done')
@@ -96,28 +96,38 @@ async function generateImage(promptText) {
       }
     )
 
-    console.log("RAW OUTPUT:", output)
+    console.log('RAW OUTPUT:', JSON.stringify(output, null, 2))
 
-    // 🔥 REAL FIX HERE
+    // 🔥 HANDLE ALL CASES
 
-    // flux returns object with URL hidden inside
+    // case 1: string
+    if (typeof output === 'string') {
+      return output
+    }
 
-    if (output && output instanceof Object) {
+    // case 2: array
+    if (Array.isArray(output)) {
+      return output[0]
+    }
 
-      // MOST COMMON CASE
-      if (output.output && Array.isArray(output.output)) {
-        return output.output[0]
-      }
+    // case 3: object with url
+    if (output.url) {
+      return output.url
+    }
 
-      // sometimes direct array
-      if (Array.isArray(output)) {
-        return output[0]
-      }
+    // case 4: object with output array
+    if (output.output && Array.isArray(output.output)) {
+      return output.output[0]
+    }
 
-      // sometimes string
-      if (typeof output === 'string') {
-        return output
-      }
+    // case 5: object with images
+    if (output.images && Array.isArray(output.images)) {
+      return output.images[0]
+    }
+
+    // case 6: object with data
+    if (output.data && Array.isArray(output.data)) {
+      return output.data[0].url
     }
 
     throw new Error('Replicate returned unknown format')
