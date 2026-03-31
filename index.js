@@ -40,10 +40,7 @@ async function runTest(chatId) {
     const themeRes = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'user',
-          content: 'Create a short megaproject documentary theme. Return only title.'
-        }
+        { role: 'user', content: 'Create a short megaproject documentary theme. Return only title.' }
       ]
     })
 
@@ -53,10 +50,7 @@ async function runTest(chatId) {
     const imgPrompt1Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'user',
-          content: `Create ONE ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.`
-        }
+        { role: 'user', content: `Create ONE ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.` }
       ]
     })
 
@@ -66,10 +60,7 @@ async function runTest(chatId) {
     const imgPrompt2Res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'user',
-          content: `Create another DIFFERENT ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.`
-        }
+        { role: 'user', content: `Create another DIFFERENT ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.` }
       ]
     })
 
@@ -104,21 +95,26 @@ async function generateImage(promptText) {
       }
     )
 
-    console.log("OUTPUT:", output)
+    console.log("RAW OUTPUT:", output)
 
-    if (!output) {
-      throw new Error("No output")
-    }
+    if (!output) throw new Error("No output")
 
-    if (typeof output === 'object' && output.url) {
-      return output.url()
+    // ✅ FIX: force string URL
+    if (typeof output === 'object' && typeof output.url === 'function') {
+      const url = output.url()
+      console.log("FINAL URL:", url)
+      return url
     }
 
     if (Array.isArray(output)) {
       return output[0]
     }
 
-    return output
+    if (typeof output === 'string') {
+      return output
+    }
+
+    throw new Error("Unknown output format")
 
   } catch (err) {
     console.error('IMAGE ERROR:', err)
