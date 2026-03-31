@@ -69,10 +69,14 @@ async function runTest(chatId) {
 
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
     const img1 = await generateImage(imgPrompt1)
+
+    if (!img1) throw new Error('Image 1 URL is empty')
     await bot.sendPhoto(chatId, img1)
 
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
     const img2 = await generateImage(imgPrompt2)
+
+    if (!img2) throw new Error('Image 2 URL is empty')
     await bot.sendPhoto(chatId, img2)
 
     await bot.sendMessage(chatId, '✅ Images done')
@@ -95,26 +99,37 @@ async function generateImage(promptText) {
       }
     )
 
-    console.log("RAW OUTPUT:", output)
+    console.log("RAW OUTPUT:", JSON.stringify(output, null, 2))
 
-    if (!output) throw new Error("No output")
+    // 🔥 FORCE EXTRACTION LOGIC
 
-    // ✅ FIX: force string URL
-    if (typeof output === 'object' && typeof output.url === 'function') {
-      const url = output.url()
-      console.log("FINAL URL:", url)
-      return url
-    }
-
-    if (Array.isArray(output)) {
-      return output[0]
-    }
-
+    // case 1: direct string
     if (typeof output === 'string') {
       return output
     }
 
-    throw new Error("Unknown output format")
+    // case 2: array
+    if (Array.isArray(output)) {
+      return output[0]
+    }
+
+    // case 3: object with url()
+    if (output && typeof output.url === 'function') {
+      return output.url()
+    }
+
+    // case 4: object with url string
+    if (output && output.url && typeof output.url === 'string') {
+      return output.url
+    }
+
+    // case 5: deep nested (VERY COMMON)
+    if (output && output[0] && typeof output[0] === 'string') {
+      return output[0]
+    }
+
+    // case 6: last fallback
+    throw new Error('Could not extract image URL')
 
   } catch (err) {
     console.error('IMAGE ERROR:', err)
