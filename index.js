@@ -1,9 +1,22 @@
-import TelegramBot from "node-telegram-bot-api"
-import Replicate from "replicate"
+const TelegramBot = require("node-telegram-bot-api")
+const Replicate = require("replicate")
+const express = require("express")
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
+
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
+})
+
+const app = express()
+const PORT = process.env.PORT || 3000
+
+app.get("/", (req, res) => {
+  res.send("Bot is running")
+})
+
+app.listen(PORT, () => {
+  console.log("Server running")
 })
 
 bot.on("message", async (msg) => {
@@ -56,55 +69,44 @@ bot.on("message", async (msg) => {
     // 3. GENERATE VIDEOS (KLING)
     // =========================
 
-   let videos = []
+    let videos = []
 
-for (let i = 0; i < images.length; i++) {
-  try {
-    await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
+    for (let i = 0; i < images.length; i++) {
+      try {
+        await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
 
-    const output = await replicate.run(
-      "kwaivgi/kling-v2.6",
-      {
-        input: {
-          prompt: "cinematic camera movement, futuristic city, peaceful atmosphere, no violence, no conflict",
-          start_image: images[i],
-        },
+        const output = await replicate.run(
+          "kwaivgi/kling-v2.6",
+          {
+            input: {
+              prompt:
+                "cinematic camera movement, futuristic city, peaceful atmosphere, no violence, no conflict",
+              start_image: images[i],
+            },
+          }
+        )
+
+        const videoUrl = Array.isArray(output) ? output[0] : output
+
+        videos.push(videoUrl)
+
+        await bot.sendVideo(chatId, videoUrl)
+      } catch (err) {
+        console.log("VIDEO FAILED:", i, err.message)
+
+        await bot.sendMessage(
+          chatId,
+          `⚠️ Video ${i + 1} failed, skipping...`
+        )
+
+        videos.push(images[i])
+        continue
       }
-    )
+    }
 
-    const videoUrl = Array.isArray(output) ? output[0] : output
-
-    videos.push(videoUrl)
-
-    await bot.sendVideo(chatId, videoUrl)
-
+    await bot.sendMessage(chatId, "🎉 Videos done")
   } catch (err) {
-    console.log("VIDEO FAILED:", i, err.message)
-
-    await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed, skipping...`)
-
-    // fallback (keeps pipeline stable)
-    videos.push(images[i])
-
-    continue
+    console.error(err)
+    await bot.sendMessage(chatId, "❌ ERROR: " + err.message)
   }
-}
-
-await bot.sendMessage(chatId, "🎉 Videos done")
-
-// =========================
-// SERVER (Railway needs this)
-// =========================
-
-import express from "express"
-const app = express()
-
-const PORT = process.env.PORT || 3000
-
-app.get("/", (req, res) => {
-  res.send("Bot is running")
-})
-
-app.listen(PORT, () => {
-  console.log("Server running")
 })
