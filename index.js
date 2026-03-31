@@ -41,10 +41,7 @@ async function runTest(chatId) {
     const themeRes = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'user',
-          content: 'Create a short megaproject documentary theme. Return only title.'
-        }
+        { role: 'user', content: 'Create a short megaproject theme. Only title.' }
       ]
     })
 
@@ -52,29 +49,34 @@ async function runTest(chatId) {
     await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
     const prompt1 = await getImagePrompt(theme)
-    await bot.sendMessage(chatId, `Prompt 1:\n${prompt1}`)
-
     const prompt2 = await getImagePrompt(theme)
+
+    await bot.sendMessage(chatId, `Prompt 1:\n${prompt1}`)
     await bot.sendMessage(chatId, `Prompt 2:\n${prompt2}`)
 
+    // IMAGE 1
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
     const img1 = await generateImage(prompt1)
-    await bot.sendMessage(chatId, `DEBUG URL:\n${img1}`)
-    await sendImageFromUrl(chatId, img1)
+    await sendImage(chatId, img1)
 
+    // IMAGE 2
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
     const img2 = await generateImage(prompt2)
-    await bot.sendMessage(chatId, `DEBUG URL:\n${img2}`)
-    await sendImageFromUrl(chatId, img2)
+    await sendImage(chatId, img2)
 
-    await bot.sendMessage(chatId, '✅ Images done')
+    await bot.sendMessage(chatId, '🎬 Generating video 1...')
+    const video1 = await generateVideo(img1, prompt1)
+    await bot.sendVideo(chatId, video1)
 
-    // video part comes after image sending is fully stable
-    // if you want, next I give you the full version with Kling video added on top of this working base
+    await bot.sendMessage(chatId, '🎬 Generating video 2...')
+    const video2 = await generateVideo(img2, prompt2)
+    await bot.sendVideo(chatId, video2)
+
+    await bot.sendMessage(chatId, '✅ DONE')
 
   } catch (err) {
-    console.error('MAIN ERROR:', err)
-    await bot.sendMessage(chatId, `❌ ERROR:\n${err.message || String(err)}`)
+    console.error(err)
+    await bot.sendMessage(chatId, '❌ ERROR')
   }
 }
 
@@ -82,10 +84,7 @@ async function getImagePrompt(theme) {
   const res = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
-      {
-        role: 'user',
-        content: `Create ONE ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.`
-      }
+      { role: 'user', content: `Create cinematic image prompt about ${theme}` }
     ]
   })
 
@@ -93,71 +92,49 @@ async function getImagePrompt(theme) {
 }
 
 async function generateImage(promptText) {
-  try {
-    const output = await replicate.run(
-      'black-forest-labs/flux-2-pro',
-      {
-        input: {
-          prompt: promptText,
-          aspect_ratio: '16:9'
-        }
+  const output = await replicate.run(
+    'black-forest-labs/flux-2-pro',
+    {
+      input: {
+        prompt: promptText,
+        aspect_ratio: '16:9'
       }
-    )
-
-    console.log('RAW OUTPUT:', output)
-
-    let imageUrl = null
-
-    if (typeof output === 'string') {
-      imageUrl = output
-    } else if (Array.isArray(output)) {
-      const first = output[0]
-
-      if (typeof first === 'string') {
-        imageUrl = first
-      } else if (first && typeof first.url === 'function') {
-        imageUrl = first.url().toString()
-      } else if (first && typeof first.url === 'string') {
-        imageUrl = first.url
-      }
-    } else if (output && typeof output.url === 'function') {
-      imageUrl = output.url().toString()
-    } else if (output && typeof output.url === 'string') {
-      imageUrl = output.url
     }
+  )
 
-    if (!imageUrl || typeof imageUrl !== 'string') {
-      throw new Error('No valid image URL extracted')
-    }
-
-    return imageUrl
-  } catch (err) {
-    console.error('IMAGE ERROR:', err)
-    throw err
-  }
+  return Array.isArray(output) ? output[0] : output
 }
 
-async function sendImageFromUrl(chatId, imageUrl) {
-  try {
-    const response = await axios.get(imageUrl, {
-      responseType: 'arraybuffer'
-    })
-
-    const buffer = Buffer.from(response.data)
-
-    await bot.sendPhoto(
-      chatId,
-      buffer,
-      {},
-      {
-        filename: 'image.webp',
-        contentType: 'image/webp'
+async function generateVideo(imageUrl, promptText) {
+  const output = await replicate.run(
+    'kwaivgi/kling-v2.6',
+    {
+      input: {
+        prompt: promptText,
+        start_image: imageUrl
       }
-    )
-  } catch (err) {
-    console.error('SEND IMAGE ERROR:', err)
-    throw err
-  }
+    }
+  )
+
+  return Array.isArray(output) ? output[0] : output
+}
+
+async function sendImage(chatId, imageUrl) {
+  const response = await axios.get(imageUrl, {
+    responseType: 'arraybuffer'
+  })
+
+  const buffer = Buffer.from(response.data)
+
+  await bot.sendPhoto(
+    chatId,
+    buffer,
+    {},
+    {
+      filename: 'image.webp',
+      contentType: 'image/webp'
+    }
+  )
 }
 
 const PORT = process.env.PORT || 3000
