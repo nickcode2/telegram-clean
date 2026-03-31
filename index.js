@@ -62,7 +62,7 @@ bot.on("message", async (msg) => {
       await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
 
       const output = await replicate.run(
-        "kwaivgi/kling-v2.1",
+        "kwaivgi/kling-v2.6",
         {
           input: {
             prompt: "cinematic motion, smooth camera movement",
