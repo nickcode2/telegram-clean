@@ -47,37 +47,27 @@ async function runTest(chatId) {
     const theme = themeRes.choices[0].message.content.trim()
     await bot.sendMessage(chatId, `THEME:\n${theme}`)
 
-    const imgPrompt1Res = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'user', content: `Create ONE ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.` }
-      ]
-    })
+    const imgPrompt1 = await generatePrompt(theme)
+    const imgPrompt2 = await generatePrompt(theme)
 
-    const imgPrompt1 = imgPrompt1Res.choices[0].message.content.trim()
     await bot.sendMessage(chatId, `Prompt 1:\n${imgPrompt1}`)
-
-    const imgPrompt2Res = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'user', content: `Create another DIFFERENT ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.` }
-      ]
-    })
-
-    const imgPrompt2 = imgPrompt2Res.choices[0].message.content.trim()
     await bot.sendMessage(chatId, `Prompt 2:\n${imgPrompt2}`)
 
     await bot.sendMessage(chatId, '🖼 Generating image 1...')
     const img1 = await generateImage(imgPrompt1)
 
-    if (!img1) throw new Error('Image 1 URL is empty')
-    await bot.sendPhoto(chatId, img1)
+    if (!img1) throw new Error('Image 1 invalid')
+
+    await bot.sendMessage(chatId, img1) // DEBUG FIRST
+    await bot.sendPhoto(chatId, { url: img1 })
 
     await bot.sendMessage(chatId, '🖼 Generating image 2...')
     const img2 = await generateImage(imgPrompt2)
 
-    if (!img2) throw new Error('Image 2 URL is empty')
-    await bot.sendPhoto(chatId, img2)
+    if (!img2) throw new Error('Image 2 invalid')
+
+    await bot.sendMessage(chatId, img2) // DEBUG FIRST
+    await bot.sendPhoto(chatId, { url: img2 })
 
     await bot.sendMessage(chatId, '✅ Images done')
 
@@ -85,6 +75,17 @@ async function runTest(chatId) {
     console.error('MAIN ERROR:', err)
     await bot.sendMessage(chatId, `❌ ERROR:\n${err.message || err}`)
   }
+}
+
+async function generatePrompt(theme) {
+  const res = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'user', content: `Create ONE ultra realistic cinematic image prompt about: ${theme}. Only return the image prompt.` }
+    ]
+  })
+
+  return res.choices[0].message.content.trim()
 }
 
 async function generateImage(promptText) {
@@ -99,37 +100,40 @@ async function generateImage(promptText) {
       }
     )
 
-    console.log("RAW OUTPUT:", JSON.stringify(output, null, 2))
+    console.log("RAW OUTPUT:", output)
 
-    // 🔥 FORCE EXTRACTION LOGIC
+    // 🔥 normalize EVERYTHING into string URL
 
-    // case 1: direct string
+    let url = null
+
     if (typeof output === 'string') {
-      return output
+      url = output
     }
 
-    // case 2: array
-    if (Array.isArray(output)) {
-      return output[0]
+    else if (Array.isArray(output)) {
+      url = output[0]
     }
 
-    // case 3: object with url()
-    if (output && typeof output.url === 'function') {
-      return output.url()
+    else if (output && typeof output === 'object') {
+
+      if (output.url && typeof output.url === 'function') {
+        url = output.url()
+      }
+
+      else if (output.url && typeof output.url === 'string') {
+        url = output.url
+      }
+
+      else if (output[0]) {
+        url = output[0]
+      }
     }
 
-    // case 4: object with url string
-    if (output && output.url && typeof output.url === 'string') {
-      return output.url
+    if (!url || typeof url !== 'string') {
+      throw new Error('No valid image URL extracted')
     }
 
-    // case 5: deep nested (VERY COMMON)
-    if (output && output[0] && typeof output[0] === 'string') {
-      return output[0]
-    }
-
-    // case 6: last fallback
-    throw new Error('Could not extract image URL')
+    return url
 
   } catch (err) {
     console.error('IMAGE ERROR:', err)
