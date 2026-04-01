@@ -15,12 +15,13 @@ bot.on("message", async (msg) => {
   if (text !== "do it") return
 
   try {
-    await bot.sendMessage(chatId, "🚀 Starting pipeline...")
+    await bot.sendMessage(chatId, "🚀 Starting 10s pipeline...")
 
-    // 🔥 10 scenes (you can change to 20, 50, 120 later)
-    const prompts = Array.from({ length: 10 }, (_, i) =>
-      `wide cinematic scene ${i + 1}, modern or futuristic environment, people standing or walking slowly, calm atmosphere, realistic lighting`
-    )
+    // ✅ BACK TO 2 SCENES (10s total)
+    const prompts = [
+      "wide cinematic futuristic city under construction at sunset, engineers standing still observing skyline, realistic lighting, calm atmosphere",
+      "aerial view of futuristic city with clean architecture, people walking slowly, neutral expressions, peaceful environment",
+    ]
 
     let images = []
 
@@ -43,8 +44,12 @@ bot.on("message", async (msg) => {
 
         images.push(imageUrl)
 
+        // ✅ SHOW IMAGE AGAIN
+        await bot.sendPhoto(chatId, imageUrl)
+
       } catch (err) {
         console.log("IMAGE FAILED:", i, err.message)
+        await bot.sendMessage(chatId, `⚠️ Image ${i + 1} failed`)
       }
     }
 
@@ -71,18 +76,16 @@ bot.on("message", async (msg) => {
 
         videos.push(videoUrl)
 
+        // ✅ SHOW VIDEO AGAIN
+        await bot.sendVideo(chatId, videoUrl)
+
       } catch (err) {
         console.log("VIDEO FAILED:", i, err.message)
+        await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed`)
       }
     }
 
     await bot.sendMessage(chatId, "🎉 Videos done")
-
-    // SAVE OUTPUT (for now logs)
-    console.log("IMAGES:", images)
-    console.log("VIDEOS:", videos)
-
-    await bot.sendMessage(chatId, "✅ Done (check Railway logs)")
 
   } catch (err) {
     console.log("MAIN ERROR:", err.message)
