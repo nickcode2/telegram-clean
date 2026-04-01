@@ -1,6 +1,9 @@
 import TelegramBot from "node-telegram-bot-api"
 import Replicate from "replicate"
 import express from "express"
+import fs from "fs"
+import axios from "axios"
+import { execSync } from "child_process"
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
@@ -17,7 +20,6 @@ bot.on("message", async (msg) => {
   try {
     await bot.sendMessage(chatId, "🚀 Starting 10s pipeline...")
 
-    // ✅ BACK TO 2 SCENES (10s total)
     const prompts = [
       "wide cinematic futuristic city under construction at sunset, engineers standing still observing skyline, realistic lighting, calm atmosphere",
       "aerial view of futuristic city with clean architecture, people walking slowly, neutral expressions, peaceful environment",
@@ -27,30 +29,22 @@ bot.on("message", async (msg) => {
 
     // IMAGE LOOP
     for (let i = 0; i < prompts.length; i++) {
-      try {
-        await bot.sendMessage(chatId, `🖼 Generating image ${i + 1}...`)
+      await bot.sendMessage(chatId, `🖼 Generating image ${i + 1}...`)
 
-        const output = await replicate.run(
-          "black-forest-labs/flux-2-max",
-          {
-            input: {
-              prompt: prompts[i],
-              aspect_ratio: "16:9",
-            },
-          }
-        )
+      const output = await replicate.run(
+        "black-forest-labs/flux-2-max",
+        {
+          input: {
+            prompt: prompts[i],
+            aspect_ratio: "16:9",
+          },
+        }
+      )
 
-        const imageUrl = Array.isArray(output) ? output[0] : output
+      const imageUrl = Array.isArray(output) ? output[0] : output
+      images.push(imageUrl)
 
-        images.push(imageUrl)
-
-        // ✅ SHOW IMAGE AGAIN
-        await bot.sendPhoto(chatId, imageUrl)
-
-      } catch (err) {
-        console.log("IMAGE FAILED:", i, err.message)
-        await bot.sendMessage(chatId, `⚠️ Image ${i + 1} failed`)
-      }
+      await bot.sendPhoto(chatId, imageUrl)
     }
 
     await bot.sendMessage(chatId, "✅ Images done")
@@ -59,36 +53,56 @@ bot.on("message", async (msg) => {
 
     // VIDEO LOOP
     for (let i = 0; i < images.length; i++) {
-      try {
-        await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
+      await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
 
-        const output = await replicate.run(
-          "kwaivgi/kling-v2.6",
-          {
-            input: {
-              prompt: "slow cinematic camera movement, people standing or walking slowly, calm environment",
-              start_image: images[i],
-            },
-          }
-        )
+      const output = await replicate.run(
+        "kwaivgi/kling-v2.6",
+        {
+          input: {
+            prompt: "slow cinematic camera movement, people standing or walking slowly, calm environment",
+            start_image: images[i],
+          },
+        }
+      )
 
-        const videoUrl = Array.isArray(output) ? output[0] : output
+      const videoUrl = Array.isArray(output) ? output[0] : output
+      videos.push(videoUrl)
 
-        videos.push(videoUrl)
-
-        // ✅ SHOW VIDEO AGAIN
-        await bot.sendVideo(chatId, videoUrl)
-
-      } catch (err) {
-        console.log("VIDEO FAILED:", i, err.message)
-        await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed`)
-      }
+      await bot.sendVideo(chatId, videoUrl)
     }
 
-    await bot.sendMessage(chatId, "🎉 Videos done")
+    await bot.sendMessage(chatId, "🎬 Merging final video...")
+
+    // DOWNLOAD VIDEOS
+    const paths = []
+    for (let i = 0; i < videos.length; i++) {
+      const path = `video${i}.mp4`
+      const response = await axios.get(videos[i], { responseType: "stream" })
+      const writer = fs.createWriteStream(path)
+
+      await new Promise((resolve, reject) => {
+        response.data.pipe(writer)
+        writer.on("finish", resolve)
+        writer.on("error", reject)
+      })
+
+      paths.push(path)
+    }
+
+    // CREATE CONCAT FILE
+    const concatText = paths.map(p => `file '${p}'`).join("\n")
+    fs.writeFileSync("concat.txt", concatText)
+
+    // MERGE WITH FFMPEG
+    execSync("ffmpeg -f concat -safe 0 -i concat.txt -c copy output.mp4")
+
+    // SEND FINAL VIDEO
+    await bot.sendVideo(chatId, fs.createReadStream("output.mp4"))
+
+    await bot.sendMessage(chatId, "🎉 Final video ready")
 
   } catch (err) {
-    console.log("MAIN ERROR:", err.message)
+    console.log(err)
     await bot.sendMessage(chatId, "❌ Pipeline failed")
   }
 })
