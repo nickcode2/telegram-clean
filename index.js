@@ -17,10 +17,10 @@ bot.on("message", async (msg) => {
   try {
     await bot.sendMessage(chatId, "🚀 Starting pipeline...")
 
-    const prompts = [
-      "wide shot of a modern city under construction at sunset, engineers standing still observing the skyline, realistic lighting, calm atmosphere",
-      "aerial view of a futuristic city with clean architecture, people walking slowly, neutral expressions, peaceful environment",
-    ]
+    // 🔥 10 scenes (you can change to 20, 50, 120 later)
+    const prompts = Array.from({ length: 10 }, (_, i) =>
+      `wide cinematic scene ${i + 1}, modern or futuristic environment, people standing or walking slowly, calm atmosphere, realistic lighting`
+    )
 
     let images = []
 
@@ -43,10 +43,8 @@ bot.on("message", async (msg) => {
 
         images.push(imageUrl)
 
-        await bot.sendPhoto(chatId, imageUrl)
       } catch (err) {
         console.log("IMAGE FAILED:", i, err.message)
-        await bot.sendMessage(chatId, `⚠️ Image ${i + 1} failed`)
       }
     }
 
@@ -73,14 +71,18 @@ bot.on("message", async (msg) => {
 
         videos.push(videoUrl)
 
-        await bot.sendVideo(chatId, videoUrl)
       } catch (err) {
         console.log("VIDEO FAILED:", i, err.message)
-        await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed`)
       }
     }
 
     await bot.sendMessage(chatId, "🎉 Videos done")
+
+    // SAVE OUTPUT (for now logs)
+    console.log("IMAGES:", images)
+    console.log("VIDEOS:", videos)
+
+    await bot.sendMessage(chatId, "✅ Done (check Railway logs)")
 
   } catch (err) {
     console.log("MAIN ERROR:", err.message)
