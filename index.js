@@ -28,25 +28,42 @@ bot.on("message", async (msg) => {
   try {
     await bot.sendMessage(chatId, "🚀 Starting 10s pipeline...")
 
-    const prompts = [
-      "A cinematic futuristic city under construction at sunset, engineers observing holographic blueprints, ultra realistic",
-      "A massive futuristic megacity with flying vehicles and glowing architecture at dusk, ultra realistic",
-    ]
+  const prompts = [
+  "wide shot of a modern city under construction at sunset, a small group of engineers standing still on a platform observing the skyline, realistic lighting, no action, calm atmosphere",
 
-    let images = []
+  "aerial view of a futuristic city with clean architecture, a few people walking slowly on elevated walkways, neutral expressions, soft lighting, peaceful environment",
+]
 
-    for (let i = 0; i < prompts.length; i++) {
-      await bot.sendMessage(chatId, `🖼 Generating image ${i + 1}...`)
+ let images = []
 
-      const output = await replicate.run(
-        "black-forest-labs/flux-2-max",
-        {
-          input: {
-            prompt: prompts[i],
-            aspect_ratio: "16:9",
-          },
-        }
-      )
+for (let i = 0; i < prompts.length; i++) {
+  try {
+    await bot.sendMessage(chatId, `🖼 Generating image ${i + 1}...`)
+
+    const output = await replicate.run(
+      "black-forest-labs/flux-2-max",
+      {
+        input: {
+          prompt: prompts[i],
+          aspect_ratio: "16:9",
+        },
+      }
+    )
+
+    const imageUrl = Array.isArray(output) ? output[0] : output
+
+    images.push(imageUrl)
+
+    await bot.sendPhoto(chatId, imageUrl)
+
+  } catch (err) {
+    console.log("IMAGE FAILED:", i, err.message)
+
+    await bot.sendMessage(chatId, `⚠️ Image ${i + 1} failed, skipping...`)
+
+    continue
+  }
+}
 
       const imageUrl = Array.isArray(output) ? output[0] : output
 
@@ -67,8 +84,7 @@ bot.on("message", async (msg) => {
           "kwaivgi/kling-v2.6",
           {
             input: {
-              prompt:
-                "cinematic camera movement, futuristic city, peaceful atmosphere, no violence",
+             prompt: "slow cinematic camera movement, smooth motion, people standing or walking slowly, no sudden movement, no interaction, calm environment",
               start_image: images[i],
             },
           }
