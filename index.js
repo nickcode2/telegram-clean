@@ -1,6 +1,6 @@
-const TelegramBot = require("node-telegram-bot-api")
-const Replicate = require("replicate")
-const express = require("express")
+import TelegramBot from "node-telegram-bot-api"
+import Replicate from "replicate"
+import express from "express"
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
@@ -28,20 +28,12 @@ bot.on("message", async (msg) => {
   try {
     await bot.sendMessage(chatId, "🚀 Starting 10s pipeline...")
 
-    // =========================
-    // 1. PROMPTS
-    // =========================
-
     const prompts = [
       "A cinematic futuristic city under construction at sunset, engineers observing holographic blueprints, ultra realistic",
       "A massive futuristic megacity with flying vehicles and glowing architecture at dusk, ultra realistic",
     ]
 
     let images = []
-
-    // =========================
-    // 2. GENERATE IMAGES
-    // =========================
 
     for (let i = 0; i < prompts.length; i++) {
       await bot.sendMessage(chatId, `🖼 Generating image ${i + 1}...`)
@@ -65,10 +57,6 @@ bot.on("message", async (msg) => {
 
     await bot.sendMessage(chatId, "✅ Images done")
 
-    // =========================
-    // 3. GENERATE VIDEOS (KLING)
-    // =========================
-
     let videos = []
 
     for (let i = 0; i < images.length; i++) {
@@ -80,7 +68,7 @@ bot.on("message", async (msg) => {
           {
             input: {
               prompt:
-                "cinematic camera movement, futuristic city, peaceful atmosphere, no violence, no conflict",
+                "cinematic camera movement, futuristic city, peaceful atmosphere, no violence",
               start_image: images[i],
             },
           }
@@ -100,7 +88,6 @@ bot.on("message", async (msg) => {
         )
 
         videos.push(images[i])
-        continue
       }
     }
 
