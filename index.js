@@ -34,7 +34,7 @@ bot.on("message", async (msg) => {
   "aerial view of a futuristic city with clean architecture, a few people walking slowly on elevated walkways, neutral expressions, soft lighting, peaceful environment",
 ]
 
- let images = []
+let images = []
 
 for (let i = 0; i < prompts.length; i++) {
   try {
@@ -60,8 +60,6 @@ for (let i = 0; i < prompts.length; i++) {
     console.log("IMAGE FAILED:", i, err.message)
 
     await bot.sendMessage(chatId, `⚠️ Image ${i + 1} failed, skipping...`)
-
-    continue
   }
 }
 
