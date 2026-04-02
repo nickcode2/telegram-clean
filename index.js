@@ -1,8 +1,8 @@
 import TelegramBot from "node-telegram-bot-api"
 import Replicate from "replicate"
 import express from "express"
-import fs from "fs"
 import axios from "axios"
+import fs from "fs"
 import { execSync } from "child_process"
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
@@ -18,18 +18,75 @@ bot.on("message", async (msg) => {
   if (text !== "do it") return
 
   try {
-    await bot.sendMessage(chatId, "🚀 Starting 10s pipeline...")
+    await bot.sendMessage(chatId, "🚀 Starting pipeline...")
+
+    // =========================
+    // SCRIPT (TEST)
+    // =========================
+
+    const script = [
+      "Massive futuristic cities are being built faster than ever.",
+      "But behind the scenes, thousands of workers coordinate every detail.",
+    ]
+
+    // =========================
+    // GENERATE AUDIO (ElevenLabs)
+    // =========================
+
+    let audioFiles = []
+
+    for (let i = 0; i < script.length; i++) {
+      await bot.sendMessage(chatId, `🎤 Generating audio ${i + 1}...`)
+
+      const response = await axios.post(
+        `https://api.elevenlabs.io/v1/text-to-speech/${process.env.VOICE_ID}`,
+        {
+          text: script[i],
+          model_id: "eleven_multilingual_v2",
+        },
+        {
+          headers: {
+            "xi-api-key": process.env.ELEVENLABS_API_KEY,
+            "Content-Type": "application/json",
+          },
+          responseType: "arraybuffer",
+        }
+      )
+
+      const filePath = `audio${i}.mp3`
+      fs.writeFileSync(filePath, response.data)
+      audioFiles.push(filePath)
+    }
+
+    await bot.sendMessage(chatId, "✅ Audio done")
+
+    // =========================
+    // GET AUDIO DURATION
+    // =========================
+
+    let durations = []
+
+    for (let i = 0; i < audioFiles.length; i++) {
+      const output = execSync(
+        `ffprobe -i ${audioFiles[i]} -show_entries format=duration -v quiet -of csv="p=0"`
+      )
+      const duration = parseFloat(output.toString().trim())
+      durations.push(duration)
+    }
+
+    // =========================
+    // IMAGE PROMPTS
+    // =========================
 
     const prompts = [
-      "wide cinematic futuristic city under construction at sunset, engineers standing still observing skyline, realistic lighting, calm atmosphere",
-      "aerial view of futuristic city with clean architecture, people walking slowly, neutral expressions, peaceful environment",
+      "wide futuristic city under construction, workers visible, realistic lighting",
+      "engineers coordinating large scale project, people present, cinematic realism",
     ]
 
     let images = []
 
-    // IMAGE LOOP
     for (let i = 0; i < prompts.length; i++) {
-      await bot.sendMessage(chatId, `🖼 Generating image ${i + 1}...`)
+      await bot.sendMessage(chatId, `🖼 Image ${i + 1}`)
 
       const output = await replicate.run(
         "black-forest-labs/flux-2-max",
@@ -43,67 +100,53 @@ bot.on("message", async (msg) => {
 
       const imageUrl = Array.isArray(output) ? output[0] : output
       images.push(imageUrl)
-
-      await bot.sendPhoto(chatId, imageUrl)
     }
 
-    await bot.sendMessage(chatId, "✅ Images done")
+    // =========================
+    // VIDEO + CUT TO AUDIO LENGTH
+    // =========================
 
-    let videos = []
+    let finalClips = []
 
-    // VIDEO LOOP
     for (let i = 0; i < images.length; i++) {
-      await bot.sendMessage(chatId, `🎬 Generating video ${i + 1}...`)
+      await bot.sendMessage(chatId, `🎬 Video ${i + 1}`)
 
       const output = await replicate.run(
         "kwaivgi/kling-v2.6",
         {
           input: {
-            prompt: "slow cinematic camera movement, people standing or walking slowly, calm environment",
+            prompt: "slow cinematic movement, people working, realistic",
             start_image: images[i],
           },
         }
       )
 
       const videoUrl = Array.isArray(output) ? output[0] : output
-      videos.push(videoUrl)
 
-      await bot.sendVideo(chatId, videoUrl)
-    }
-
-    await bot.sendMessage(chatId, "🎬 Merging final video...")
-
-    // DOWNLOAD VIDEOS
-    const paths = []
-    for (let i = 0; i < videos.length; i++) {
-      const path = `video${i}.mp4`
-      const response = await axios.get(videos[i], { responseType: "stream" })
-      const writer = fs.createWriteStream(path)
+      const videoPath = `video${i}.mp4`
+      const response = await axios.get(videoUrl, { responseType: "stream" })
 
       await new Promise((resolve, reject) => {
+        const writer = fs.createWriteStream(videoPath)
         response.data.pipe(writer)
         writer.on("finish", resolve)
         writer.on("error", reject)
       })
 
-      paths.push(path)
+      const trimmed = `clip${i}.mp4`
+
+      execSync(
+        `ffmpeg -i ${videoPath} -t ${durations[i]} -c copy ${trimmed}`
+      )
+
+      finalClips.push(trimmed)
     }
 
-    // CREATE CONCAT FILE
-    const concatText = paths.map(p => `file '${p}'`).join("\n")
-    fs.writeFileSync("concat.txt", concatText)
-
-    // MERGE WITH FFMPEG
-    execSync("ffmpeg -f concat -safe 0 -i concat.txt -c copy output.mp4")
-
-    // SEND FINAL VIDEO
-    await bot.sendVideo(chatId, fs.createReadStream("output.mp4"))
-
-    await bot.sendMessage(chatId, "🎉 Final video ready")
+    await bot.sendMessage(chatId, "✅ Clips matched to audio")
 
   } catch (err) {
     console.log(err)
-    await bot.sendMessage(chatId, "❌ Pipeline failed")
+    await bot.sendMessage(chatId, "❌ Failed")
   }
 })
 
@@ -111,10 +154,5 @@ bot.on("message", async (msg) => {
 const app = express()
 const PORT = process.env.PORT || 3000
 
-app.get("/", (req, res) => {
-  res.send("Bot is running")
-})
-
-app.listen(PORT, () => {
-  console.log("Server running")
-})
+app.get("/", (req, res) => res.send("OK"))
+app.listen(PORT)
