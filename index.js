@@ -26,56 +26,60 @@ bot.on("message", async (msg) => {
 
     const script = [
       "Massive futuristic cities are being built faster than ever.",
-      "But behind the scenes, thousands of workers coordinate every detail.",
+      "Thousands of workers coordinate every detail behind the scenes.",
     ]
 
     // =========================
-    // GENERATE AUDIO (ElevenLabs)
-    // =========================
-
-    let audioFiles = []
-
-    for (let i = 0; i < script.length; i++) {
-      await bot.sendMessage(chatId, `🎤 Generating audio ${i + 1}...`)
-
-      const response = await axios.post(
-        `https://api.elevenlabs.io/v1/text-to-speech/${process.env.VOICE_ID}`,
-        {
-          text: script[i],
-          model_id: "eleven_multilingual_v2",
-        },
-        {
-          headers: {
-            "xi-api-key": process.env.ELEVENLABS_API_KEY,
-            "Content-Type": "application/json",
-          },
-          responseType: "arraybuffer",
-        }
-      )
-
-      const filePath = `audio${i}.mp3`
-      fs.writeFileSync(filePath, response.data)
-      audioFiles.push(filePath)
-    }
-
-    await bot.sendMessage(chatId, "✅ Audio done")
-
-    // =========================
-    // GET AUDIO DURATION
+    // AUDIO (SAFE FALLBACK)
     // =========================
 
     let durations = []
+    let audioFailed = false
 
-    for (let i = 0; i < audioFiles.length; i++) {
-      const output = execSync(
-        `ffprobe -i ${audioFiles[i]} -show_entries format=duration -v quiet -of csv="p=0"`
-      )
-      const duration = parseFloat(output.toString().trim())
-      durations.push(duration)
+    for (let i = 0; i < script.length; i++) {
+      try {
+        await bot.sendMessage(chatId, `🎤 Audio ${i + 1}`)
+
+        const response = await axios.post(
+          `https://api.elevenlabs.io/v1/text-to-speech/${process.env.VOICE_ID}`,
+          {
+            text: script[i],
+            model_id: "eleven_multilingual_v2",
+          },
+          {
+            headers: {
+              "xi-api-key": process.env.ELEVENLABS_API_KEY,
+              "Content-Type": "application/json",
+            },
+            responseType: "arraybuffer",
+          }
+        )
+
+        const filePath = `audio${i}.mp3`
+        fs.writeFileSync(filePath, response.data)
+
+        const output = execSync(
+          `ffprobe -i ${filePath} -show_entries format=duration -v quiet -of csv="p=0"`
+        )
+
+        const duration = parseFloat(output.toString().trim())
+        durations.push(duration)
+
+      } catch (err) {
+        console.log("AUDIO FAILED:", err.message)
+        audioFailed = true
+        durations.push(5) // fallback = 5 sec
+      }
+    }
+
+    if (audioFailed) {
+      await bot.sendMessage(chatId, "⚠️ Audio failed → using 5s fallback")
+    } else {
+      await bot.sendMessage(chatId, "✅ Audio done")
     }
 
     // =========================
-    // IMAGE PROMPTS
+    // IMAGES
     // =========================
 
     const prompts = [
@@ -102,11 +106,11 @@ bot.on("message", async (msg) => {
       images.push(imageUrl)
     }
 
-    // =========================
-    // VIDEO + CUT TO AUDIO LENGTH
-    // =========================
+    await bot.sendMessage(chatId, "✅ Images done")
 
-    let finalClips = []
+    // =========================
+    // VIDEOS (TRIMMED)
+    // =========================
 
     for (let i = 0; i < images.length; i++) {
       await bot.sendMessage(chatId, `🎬 Video ${i + 1}`)
@@ -139,10 +143,10 @@ bot.on("message", async (msg) => {
         `ffmpeg -i ${videoPath} -t ${durations[i]} -c copy ${trimmed}`
       )
 
-      finalClips.push(trimmed)
+      await bot.sendVideo(chatId, trimmed)
     }
 
-    await bot.sendMessage(chatId, "✅ Clips matched to audio")
+    await bot.sendMessage(chatId, "🎉 Done")
 
   } catch (err) {
     console.log(err)
