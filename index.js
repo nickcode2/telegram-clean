@@ -20,62 +20,15 @@ bot.on("message", async (msg) => {
   try {
     await bot.sendMessage(chatId, "🚀 Starting pipeline...")
 
-    // =========================
-    // SCRIPT (TEST)
-    // =========================
-
     const script = [
       "Massive futuristic cities are being built faster than ever.",
       "Thousands of workers coordinate every detail behind the scenes.",
     ]
 
-    // =========================
-    // AUDIO (SAFE FALLBACK)
-    // =========================
-
     let durations = []
-    let audioFailed = false
 
     for (let i = 0; i < script.length; i++) {
-      try {
-        await bot.sendMessage(chatId, `🎤 Audio ${i + 1}`)
-
-        const response = await axios.post(
-          `https://api.elevenlabs.io/v1/text-to-speech/${process.env.VOICE_ID}`,
-          {
-            text: script[i],
-            model_id: "eleven_multilingual_v2",
-          },
-          {
-            headers: {
-              "xi-api-key": process.env.ELEVENLABS_API_KEY,
-              "Content-Type": "application/json",
-            },
-            responseType: "arraybuffer",
-          }
-        )
-
-        const filePath = `audio${i}.mp3`
-        fs.writeFileSync(filePath, response.data)
-
-        const output = execSync(
-          `ffprobe -i ${filePath} -show_entries format=duration -v quiet -of csv="p=0"`
-        )
-
-        const duration = parseFloat(output.toString().trim())
-        durations.push(duration)
-
-      } catch (err) {
-        console.log("AUDIO FAILED:", err.message)
-        audioFailed = true
-        durations.push(5) // fallback = 5 sec
-      }
-    }
-
-    if (audioFailed) {
-      await bot.sendMessage(chatId, "⚠️ Audio failed → using 5s fallback")
-    } else {
-      await bot.sendMessage(chatId, "✅ Audio done")
+      durations.push(5) // temp fallback (we already tested audio)
     }
 
     // =========================
@@ -109,8 +62,10 @@ bot.on("message", async (msg) => {
     await bot.sendMessage(chatId, "✅ Images done")
 
     // =========================
-    // VIDEOS (TRIMMED)
+    // VIDEOS → TRIM
     // =========================
+
+    let clips = []
 
     for (let i = 0; i < images.length; i++) {
       await bot.sendMessage(chatId, `🎬 Video ${i + 1}`)
@@ -140,13 +95,41 @@ bot.on("message", async (msg) => {
       const trimmed = `clip${i}.mp4`
 
       execSync(
-        `ffmpeg -i ${videoPath} -t ${durations[i]} -c copy ${trimmed}`
+        `ffmpeg -y -i ${videoPath} -t ${durations[i]} -c copy ${trimmed}`
       )
 
-      await bot.sendVideo(chatId, trimmed)
+      clips.push(trimmed)
     }
 
-    await bot.sendMessage(chatId, "🎉 Done")
+    await bot.sendMessage(chatId, "✅ Clips ready")
+
+    // =========================
+    // MERGE CLIPS
+    // =========================
+
+    const listFile = "list.txt"
+    const content = clips.map(c => `file '${c}'`).join("\n")
+    fs.writeFileSync(listFile, content)
+
+    execSync(
+      `ffmpeg -y -f concat -safe 0 -i ${listFile} -c copy merged.mp4`
+    )
+
+    await bot.sendMessage(chatId, "🎞 Video merged")
+
+    // =========================
+    // ADD BACKGROUND MUSIC
+    // =========================
+
+    // put your music file in repo root: music.mp3
+
+    execSync(
+      `ffmpeg -y -i merged.mp4 -i music.mp3 -map 0:v -map 1:a -shortest -c:v copy -c:a aac final.mp4`
+    )
+
+    await bot.sendVideo(chatId, "final.mp4")
+
+    await bot.sendMessage(chatId, "🎉 FINAL VIDEO READY")
 
   } catch (err) {
     console.log(err)
