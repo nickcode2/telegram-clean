@@ -15,25 +15,17 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 })
 
-let drive = null
+// ===== GOOGLE DRIVE =====
+const credentials = JSON.parse(process.env.GDRIVE_CREDENTIALS)
 
-// SAFE PARSE (fix crash)
-try {
-  const credentials = JSON.parse(process.env.GDRIVE_CREDENTIALS || "{}")
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ["https://www.googleapis.com/auth/drive"],
+})
 
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/drive"],
-  })
-
-  drive = google.drive({ version: "v3", auth })
-} catch (e) {
-  console.log("⚠️ GDRIVE DISABLED (invalid JSON)")
-}
+const drive = google.drive({ version: "v3", auth })
 
 async function createFolder(name, parentId = null) {
-  if (!drive) return null
-
   const res = await drive.files.create({
     requestBody: {
       name,
@@ -45,8 +37,6 @@ async function createFolder(name, parentId = null) {
 }
 
 async function uploadFile(filePath, folderId) {
-  if (!drive || !folderId) return
-
   await drive.files.create({
     requestBody: {
       name: path.basename(filePath),
@@ -59,6 +49,7 @@ async function uploadFile(filePath, folderId) {
   })
 }
 
+// ===== BOT =====
 const userState = {}
 
 bot.on("message", async (msg) => {
@@ -67,7 +58,7 @@ bot.on("message", async (msg) => {
 
   if (text === "do it") {
     userState[chatId] = { step: "waiting_theme" }
-    await bot.sendMessage(chatId, "🧠 Send theme / link / text")
+    await bot.sendMessage(chatId, "Send theme / link / text")
     return
   }
 
@@ -75,7 +66,7 @@ bot.on("message", async (msg) => {
     userState[chatId] = { step: "processing" }
 
     try {
-      await bot.sendMessage(chatId, "🚀 Starting...")
+      await bot.sendMessage(chatId, "Starting...")
 
       const theme = text.split(" ").slice(0, 4).join("_")
 
@@ -84,17 +75,15 @@ bot.on("message", async (msg) => {
       const videosFolder = await createFolder("videos", mainFolder)
 
       const prompts = [
-        `${text}, realistic cinematic scene, people present`,
-        `${text}, natural lighting, workers, documentary style`,
+        `${text}, realistic cinematic, people, documentary`,
+        `${text}, natural lighting, workers, real life`,
       ]
 
       let images = []
       let clips = []
 
-      // IMAGES
+      // ===== IMAGES =====
       for (let i = 0; i < prompts.length; i++) {
-        await bot.sendMessage(chatId, `🖼 Image ${i + 1}`)
-
         const output = await replicate.run(
           "black-forest-labs/flux-2-max",
           {
@@ -118,23 +107,20 @@ bot.on("message", async (msg) => {
         })
 
         images.push(imgPath)
-
-        await bot.sendPhoto(chatId, imgPath)
         await uploadFile(imgPath, imagesFolder)
       }
 
-      await bot.sendMessage(chatId, "✅ Images done")
+      await bot.sendMessage(chatId, "Images saved to Drive")
 
-      // VIDEOS
+      // ===== VIDEOS (FIXED PROMPT) =====
       for (let i = 0; i < images.length; i++) {
-        await bot.sendMessage(chatId, `🎬 Video ${i + 1}`)
-
         const output = await replicate.run(
           "kwaivgi/kling-v2.6",
           {
             input: {
-              prompt: `realistic motion, ${text}`,
+              prompt: "subtle camera movement, realistic motion, no distortion",
               start_image: images[i],
+              duration: 5,
             },
           }
         )
@@ -152,26 +138,24 @@ bot.on("message", async (msg) => {
         })
 
         clips.push(videoPath)
-
-        await bot.sendVideo(chatId, videoPath)
         await uploadFile(videoPath, videosFolder)
       }
 
-      await bot.sendMessage(chatId, "🎬 Merging...")
+      await bot.sendMessage(chatId, "Videos saved to Drive")
 
+      // ===== MERGE =====
       const list = clips.map(c => `file '${c}'`).join("\n")
       fs.writeFileSync("list.txt", list)
 
       execSync(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy final.mp4`)
 
-      await bot.sendVideo(chatId, "final.mp4")
       await uploadFile("final.mp4", videosFolder)
 
-      await bot.sendMessage(chatId, "🎉 DONE")
+      await bot.sendMessage(chatId, "DONE (check Google Drive)")
 
     } catch (err) {
       console.log(err)
-      await bot.sendMessage(chatId, "❌ Failed")
+      await bot.sendMessage(chatId, "FAILED")
     }
   }
 })
