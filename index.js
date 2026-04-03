@@ -7,23 +7,14 @@ import { execSync } from "child_process"
 import path from "path"
 import { google } from "googleapis"
 
-// =========================
-// TELEGRAM
-// =========================
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
   polling: { interval: 3000, autoStart: true },
 })
 
-// =========================
-// REPLICATE
-// =========================
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 })
 
-// =========================
-// GOOGLE DRIVE SETUP
-// =========================
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GDRIVE_CREDENTIALS),
   scopes: ["https://www.googleapis.com/auth/drive"],
@@ -55,9 +46,6 @@ async function uploadFile(filePath, folderId) {
   })
 }
 
-// =========================
-// STATE
-// =========================
 const userState = {}
 
 bot.on("message", async (msg) => {
@@ -76,33 +64,21 @@ bot.on("message", async (msg) => {
     try {
       await bot.sendMessage(chatId, "🚀 Starting...")
 
-      // =========================
-      // THEME NAME (MAX 4 WORDS)
-      // =========================
       const theme = text.split(" ").slice(0, 4).join("_")
 
-      // =========================
-      // GOOGLE DRIVE FOLDERS
-      // =========================
       const mainFolder = await createFolder(theme)
       const imagesFolder = await createFolder("images", mainFolder)
       const videosFolder = await createFolder("videos", mainFolder)
-      const audioFolder = await createFolder("audio_script", mainFolder)
 
-      // =========================
-      // PROMPTS
-      // =========================
       const prompts = [
         `${text}, cinematic, realistic, people present`,
-        `${text}, detailed environment, workers, realistic lighting`,
+        `${text}, realistic scene, workers, natural lighting`,
       ]
 
       let images = []
       let clips = []
 
-      // =========================
       // IMAGES
-      // =========================
       for (let i = 0; i < prompts.length; i++) {
         await bot.sendMessage(chatId, `🖼 Image ${i + 1}`)
 
@@ -130,16 +106,13 @@ bot.on("message", async (msg) => {
 
         images.push(imgPath)
 
-        // SEND TO TELEGRAM (FIXED)
         await bot.sendPhoto(chatId, imgPath)
-
-        // UPLOAD TO DRIVE
         await uploadFile(imgPath, imagesFolder)
       }
 
-      // =========================
+      await bot.sendMessage(chatId, "✅ Images done")
+
       // VIDEOS
-      // =========================
       for (let i = 0; i < images.length; i++) {
         await bot.sendMessage(chatId, `🎬 Video ${i + 1}`)
 
@@ -167,23 +140,18 @@ bot.on("message", async (msg) => {
 
         clips.push(videoPath)
 
-        // SEND TO TELEGRAM (FIXED)
         await bot.sendVideo(chatId, videoPath)
-
-        // UPLOAD TO DRIVE
         await uploadFile(videoPath, videosFolder)
       }
 
-      // =========================
-      // MERGE
-      // =========================
+      await bot.sendMessage(chatId, "🎬 Merging...")
+
       const list = clips.map(c => `file '${c}'`).join("\n")
       fs.writeFileSync("list.txt", list)
 
       execSync(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy final.mp4`)
 
       await bot.sendVideo(chatId, "final.mp4")
-
       await uploadFile("final.mp4", videosFolder)
 
       await bot.sendMessage(chatId, "🎉 DONE")
@@ -195,9 +163,6 @@ bot.on("message", async (msg) => {
   }
 })
 
-// =========================
-// SERVER
-// =========================
 const app = express()
 const PORT = process.env.PORT || 3000
 
