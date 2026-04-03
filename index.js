@@ -15,14 +15,25 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 })
 
-const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GDRIVE_CREDENTIALS),
-  scopes: ["https://www.googleapis.com/auth/drive"],
-})
+let drive = null
 
-const drive = google.drive({ version: "v3", auth })
+// SAFE PARSE (fix crash)
+try {
+  const credentials = JSON.parse(process.env.GDRIVE_CREDENTIALS || "{}")
+
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  })
+
+  drive = google.drive({ version: "v3", auth })
+} catch (e) {
+  console.log("⚠️ GDRIVE DISABLED (invalid JSON)")
+}
 
 async function createFolder(name, parentId = null) {
+  if (!drive) return null
+
   const res = await drive.files.create({
     requestBody: {
       name,
@@ -34,6 +45,8 @@ async function createFolder(name, parentId = null) {
 }
 
 async function uploadFile(filePath, folderId) {
+  if (!drive || !folderId) return
+
   await drive.files.create({
     requestBody: {
       name: path.basename(filePath),
@@ -71,8 +84,8 @@ bot.on("message", async (msg) => {
       const videosFolder = await createFolder("videos", mainFolder)
 
       const prompts = [
-        `${text}, cinematic, realistic, people present`,
-        `${text}, realistic scene, workers, natural lighting`,
+        `${text}, realistic cinematic scene, people present`,
+        `${text}, natural lighting, workers, documentary style`,
       ]
 
       let images = []
@@ -120,7 +133,7 @@ bot.on("message", async (msg) => {
           "kwaivgi/kling-v2.6",
           {
             input: {
-              prompt: `cinematic motion, ${text}, realistic`,
+              prompt: `realistic motion, ${text}`,
               start_image: images[i],
             },
           }
