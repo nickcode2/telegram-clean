@@ -1,167 +1,178 @@
 import TelegramBot from "node-telegram-bot-api"
-import Replicate from "replicate"
-import express from "express"
-import axios from "axios"
 import fs from "fs"
-import { execSync } from "child_process"
 import path from "path"
-import { google } from "googleapis"
+import axios from "axios"
+import { execSync } from "child_process"
 
-const bot = new TelegramBot(process.env.BOT_TOKEN, {
-  polling: { interval: 3000, autoStart: true },
-})
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-})
+let userState = {}
 
-// ===== GOOGLE DRIVE =====
-const credentials = JSON.parse(process.env.GDRIVE_CREDENTIALS)
+// ====== HELPERS ======
 
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/drive"],
-})
+const TMP = "/tmp"
 
-const drive = google.drive({ version: "v3", auth })
-
-async function createFolder(name, parentId = null) {
-  const res = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: parentId ? [parentId] : [],
-    },
-  })
-  return res.data.id
-}
-
-async function uploadFile(filePath, folderId) {
-  await drive.files.create({
-    requestBody: {
-      name: path.basename(filePath),
-      parents: [folderId],
-    },
-    media: {
-      mimeType: "application/octet-stream",
-      body: fs.createReadStream(filePath),
-    },
+function ensureDirs() {
+  const dirs = ["images", "videos", "audio", "music"]
+  dirs.forEach(d => {
+    const full = path.join(TMP, d)
+    if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true })
   })
 }
 
-// ===== BOT =====
-const userState = {}
+function cleanTmp() {
+  fs.rmSync(TMP, { recursive: true, force: true })
+}
+
+async function downloadFile(url, filepath) {
+  const res = await axios({ url, responseType: "stream" })
+  const writer = fs.createWriteStream(filepath)
+  res.data.pipe(writer)
+
+  return new Promise((resolve, reject) => {
+    writer.on("finish", resolve)
+    writer.on("error", reject)
+  })
+}
+
+// ====== FAKE GENERATORS (WE WILL UPGRADE LATER) ======
+
+async function generateScript(input) {
+  return Array.from({ length: 10 }, (_, i) => ({
+    text: `Scene ${i + 1} about ${input}`
+  }))
+}
+
+async function generateImage(i) {
+  const file = `${TMP}/images/img_${i}.jpg`
+  await downloadFile("https://picsum.photos/1024", file)
+  return file
+}
+
+async function generateVideo(i, imgPath) {
+  const output = `${TMP}/videos/video_${i}.mp4`
+
+  execSync(`
+    ffmpeg -y -loop 1 -i ${imgPath} -t 5 -vf "scale=1280:720" -pix_fmt yuv420p ${output}
+  `)
+
+  return output
+}
+
+async function generateVoice(script) {
+  const output = `${TMP}/audio/voice.mp3`
+
+  execSync(`
+    ffmpeg -y -f lavfi -i "sine=frequency=1000:duration=10" ${output}
+  `)
+
+  return output
+}
+
+async function generateMusic() {
+  const output = `${TMP}/music/music.mp3`
+
+  execSync(`
+    ffmpeg -y -f lavfi -i "sine=frequency=200:duration=10" ${output}
+  `)
+
+  return output
+}
+
+// ====== MERGE ======
+
+async function mergeVideos(videoFiles) {
+  const listFile = `${TMP}/videos/list.txt`
+
+  fs.writeFileSync(
+    listFile,
+    videoFiles.map(v => `file '${v}'`).join("\n")
+  )
+
+  const output = `${TMP}/merged.mp4`
+
+  execSync(`
+    ffmpeg -y -f concat -safe 0 -i ${listFile} -c copy ${output}
+  `)
+
+  return output
+}
+
+async function finalMerge(video, voice, music) {
+  const output = `${TMP}/final.mp4`
+
+  execSync(`
+    ffmpeg -y -i ${video} -i ${voice} -i ${music} \
+    -filter_complex "[2:a]volume=0.2[a2];[1:a][a2]amix=inputs=2:duration=longest" \
+    -c:v copy -c:a aac ${output}
+  `)
+
+  return output
+}
+
+// ====== TELEGRAM FLOW ======
+
+bot.onText(/do it/, async (msg) => {
+  const chatId = msg.chat.id
+  userState[chatId] = "waiting_input"
+
+  await bot.sendMessage(chatId, "Send theme / link / text")
+})
 
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id
-  const text = msg.text
 
-  if (text === "do it") {
-    userState[chatId] = { step: "waiting_theme" }
-    await bot.sendMessage(chatId, "Send theme / link / text")
-    return
-  }
+  if (userState[chatId] !== "waiting_input") return
+  userState[chatId] = null
 
-  if (userState[chatId]?.step === "waiting_theme") {
-    userState[chatId] = { step: "processing" }
+  const input = msg.text
 
-    try {
-      await bot.sendMessage(chatId, "Starting...")
+  try {
+    ensureDirs()
 
-      const theme = text.split(" ").slice(0, 4).join("_")
+    await bot.sendMessage(chatId, "Got it. Creating script...")
 
-      const mainFolder = await createFolder(theme)
-      const imagesFolder = await createFolder("images", mainFolder)
-      const videosFolder = await createFolder("videos", mainFolder)
+    const script = await generateScript(input)
 
-      const prompts = [
-        `${text}, realistic cinematic, people, documentary`,
-        `${text}, natural lighting, workers, real life`,
-      ]
+    await bot.sendMessage(chatId, "Generating images...")
 
-      let images = []
-      let clips = []
-
-      // ===== IMAGES =====
-      for (let i = 0; i < prompts.length; i++) {
-        const output = await replicate.run(
-          "black-forest-labs/flux-2-max",
-          {
-            input: {
-              prompt: prompts[i],
-              aspect_ratio: "16:9",
-            },
-          }
-        )
-
-        const imageUrl = Array.isArray(output) ? output[0] : output
-
-        const imgPath = `image${i}.jpg`
-        const res = await axios.get(imageUrl, { responseType: "stream" })
-
-        await new Promise((resolve, reject) => {
-          const writer = fs.createWriteStream(imgPath)
-          res.data.pipe(writer)
-          writer.on("finish", resolve)
-          writer.on("error", reject)
-        })
-
-        images.push(imgPath)
-        await uploadFile(imgPath, imagesFolder)
-      }
-
-      await bot.sendMessage(chatId, "Images saved to Drive")
-
-      // ===== VIDEOS (FIXED PROMPT) =====
-      for (let i = 0; i < images.length; i++) {
-        const output = await replicate.run(
-          "kwaivgi/kling-v2.6",
-          {
-            input: {
-              prompt: "subtle camera movement, realistic motion, no distortion",
-              start_image: images[i],
-              duration: 5,
-            },
-          }
-        )
-
-        const videoUrl = Array.isArray(output) ? output[0] : output
-
-        const videoPath = `video${i}.mp4`
-        const res = await axios.get(videoUrl, { responseType: "stream" })
-
-        await new Promise((resolve, reject) => {
-          const writer = fs.createWriteStream(videoPath)
-          res.data.pipe(writer)
-          writer.on("finish", resolve)
-          writer.on("error", reject)
-        })
-
-        clips.push(videoPath)
-        await uploadFile(videoPath, videosFolder)
-      }
-
-      await bot.sendMessage(chatId, "Videos saved to Drive")
-
-      // ===== MERGE =====
-      const list = clips.map(c => `file '${c}'`).join("\n")
-      fs.writeFileSync("list.txt", list)
-
-      execSync(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy final.mp4`)
-
-      await uploadFile("final.mp4", videosFolder)
-
-      await bot.sendMessage(chatId, "DONE (check Google Drive)")
-
-    } catch (err) {
-      console.log(err)
-      await bot.sendMessage(chatId, "FAILED")
+    let images = []
+    for (let i = 0; i < script.length; i++) {
+      const img = await generateImage(i)
+      images.push(img)
     }
+
+    await bot.sendMessage(chatId, "Creating videos...")
+
+    let videos = []
+    for (let i = 0; i < images.length; i++) {
+      const vid = await generateVideo(i, images[i])
+      videos.push(vid)
+    }
+
+    await bot.sendMessage(chatId, "Merging video...")
+
+    const merged = await mergeVideos(videos)
+
+    await bot.sendMessage(chatId, "Generating audio...")
+
+    const voice = await generateVoice(script)
+    const music = await generateMusic()
+
+    await bot.sendMessage(chatId, "Rendering final video...")
+
+    const finalVideo = await finalMerge(merged, voice, music)
+
+    await bot.sendMessage(chatId, "Sending video...")
+
+    await bot.sendVideo(chatId, finalVideo)
+
+    await bot.sendMessage(chatId, "DONE 🚀")
+
+    cleanTmp()
+
+  } catch (e) {
+    console.log(e)
+    await bot.sendMessage(chatId, "FAILED ❌")
   }
 })
-
-const app = express()
-const PORT = process.env.PORT || 3000
-
-app.get("/", (req, res) => res.send("OK"))
-app.listen(PORT)
