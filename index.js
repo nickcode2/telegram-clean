@@ -33,27 +33,23 @@ async function downloadFile(url, filepath) {
   })
 }
 
-// ===== SCRIPT =====
+// ===== SCRIPT (REAL FLOW) =====
 
 function generateScript(input) {
-  return `This video explores ${input} and its deeper meaning. Thanks for watching`
+  return [
+    `Scientists are exploring ${input} and uncovering hidden details.`,
+    `These discoveries may completely change our understanding. Thanks for watching`
+  ]
 }
 
-// ===== SCENES =====
+// ===== SCENES (BASED ON SCRIPT) =====
 
-function splitScenes(script, input) {
-  return [
-    {
-      script: `Introduction about ${input}`,
-      imagePrompt: `cinematic shot of ${input}, dramatic lighting`,
-      motionPrompt: `slow zoom in`
-    },
-    {
-      script: `Final explanation about ${input}`,
-      imagePrompt: `wide shot of ${input}, atmospheric`,
-      motionPrompt: `slow pan right`
-    }
-  ]
+function splitScenes(scriptArray) {
+  return scriptArray.map((sceneText, i) => ({
+    script: sceneText,
+    imagePrompt: `realistic cinematic scene of ${sceneText}, dramatic lighting`,
+    motionPrompt: i === 0 ? "slow zoom in" : "slow pan right"
+  }))
 }
 
 // ===== IMAGE =====
@@ -138,7 +134,6 @@ let userState = {}
 bot.onText(/do it/, async (msg) => {
   const chatId = msg.chat.id
   userState[chatId] = "waiting"
-
   await bot.sendMessage(chatId, "Send theme, link, or text")
 })
 
@@ -153,28 +148,29 @@ bot.on("message", async (msg) => {
   try {
     ensureDirs()
 
-    // 2. Creating script
+    // 1. SCRIPT
     await bot.sendMessage(chatId, "Creating script")
 
-    const script = generateScript(input)
+    const scriptArray = generateScript(input)
+    const fullScript = scriptArray.join(" ")
 
-    await bot.sendMessage(chatId, script)
+    await bot.sendMessage(chatId, fullScript)
 
-    // 3. Scene breakdown
-    const scenes = splitScenes(script, input)
+    // 2. SCENES
+    const scenes = splitScenes(scriptArray)
 
-    let breakdownText = ""
+    let breakdown = ""
 
     scenes.forEach((scene, i) => {
-      breakdownText += `Scene ${i + 1}\n`
-      breakdownText += `Script: ${scene.script}\n`
-      breakdownText += `Image prompt: ${scene.imagePrompt}\n`
-      breakdownText += `Video motion prompt: ${scene.motionPrompt}\n\n`
+      breakdown += `Scene ${i + 1}\n`
+      breakdown += `Script: ${scene.script}\n`
+      breakdown += `Image prompt: ${scene.imagePrompt}\n`
+      breakdown += `Video motion prompt: ${scene.motionPrompt}\n\n`
     })
 
-    await bot.sendMessage(chatId, breakdownText)
+    await bot.sendMessage(chatId, breakdown)
 
-    // 5. Images
+    // 3. IMAGES
     await bot.sendMessage(chatId, "Creating images")
 
     let images = []
@@ -184,7 +180,7 @@ bot.on("message", async (msg) => {
       await bot.sendPhoto(chatId, img)
     }
 
-    // 6. Videos
+    // 4. VIDEOS
     await bot.sendMessage(chatId, "Creating videos")
 
     let videos = []
@@ -194,7 +190,7 @@ bot.on("message", async (msg) => {
       await bot.sendVideo(chatId, vid)
     }
 
-    // 7. Voice
+    // 5. VOICE
     await bot.sendMessage(chatId, "Creating voice")
 
     let voices = []
@@ -204,19 +200,18 @@ bot.on("message", async (msg) => {
       await bot.sendAudio(chatId, voice)
     }
 
-    // 8. Music
+    // 6. MUSIC
     await bot.sendMessage(chatId, "Creating background music")
 
     const music = generateMusic()
     await bot.sendAudio(chatId, music)
 
-    // 9. Final
+    // 7. FINAL
     await bot.sendMessage(chatId, "Rendering final video")
 
     const merged = mergeVideos(videos)
     const finalVideo = finalMerge(merged, voices, music)
 
-    // 10. Delivery
     await bot.sendVideo(chatId, finalVideo)
 
     cleanTmp()
