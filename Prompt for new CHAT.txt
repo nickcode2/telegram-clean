@@ -1,0 +1,21 @@
+I am building a Telegram AI video automation system.
+
+Read this project state carefully and CONTINUE from it. Do not restart or simplify.
+
+[PASTE PROJECT_STATE.md HERE]
+
+IMPORTANT:
+
+- Do NOT suggest basic setup
+- Do NOT suggest Google Drive
+- Do NOT change architecture
+- Only continue from CURRENT STATUS
+
+What I want now:
+
+[WRITE YOUR NEXT STEP HERE]
+
+Example:
+- build real OpenAI script generation
+- fix ffmpeg failure
+- implement scene-by-scene pipeline
