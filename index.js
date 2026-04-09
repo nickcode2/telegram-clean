@@ -1,223 +1,185 @@
 import TelegramBot from "node-telegram-bot-api"
 import fs from "fs"
-import path from "path"
-import axios from "axios"
-import { execSync } from "child_process"
+import fetch from "node-fetch"
+
+// ----------------------------------------
+// START THE BOT
+// ----------------------------------------
+console.log("Starting bot...")
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
 
-const TMP = "/tmp"
+bot.on("polling_error", (err) => {
+  console.error("Polling error:", err.message)
+})
 
-// ===== SETUP =====
+console.log("Bot is running. Waiting for messages...")
 
-function ensureDirs() {
-  const dirs = ["images", "videos", "audio", "music"]
-  dirs.forEach(d => {
-    const full = path.join(TMP, d)
-    if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true })
-  })
-}
-
-function cleanTmp() {
-  fs.rmSync(TMP, { recursive: true, force: true })
-}
-
-async function downloadFile(url, filepath) {
-  const res = await axios({ url, responseType: "stream" })
-  const writer = fs.createWriteStream(filepath)
-  res.data.pipe(writer)
-
-  return new Promise((resolve, reject) => {
-    writer.on("finish", resolve)
-    writer.on("error", reject)
-  })
-}
-
-// ===== SCRIPT (REAL FLOW) =====
-
-function generateScript(input) {
-  return [
-    `Scientists are exploring ${input} and uncovering hidden details.`,
-    `These discoveries may completely change our understanding. Thanks for watching`
-  ]
-}
-
-// ===== SCENES (BASED ON SCRIPT) =====
-
-function splitScenes(scriptArray) {
-  return scriptArray.map((sceneText, i) => ({
-    script: sceneText,
-    imagePrompt: `realistic cinematic scene of ${sceneText}, dramatic lighting`,
-    motionPrompt: i === 0 ? "slow zoom in" : "slow pan right"
-  }))
-}
-
-// ===== IMAGE =====
-
-async function generateImage(i) {
-  const file = `${TMP}/images/img_${i}.jpg`
-  await downloadFile("https://picsum.photos/1280/720", file)
-  return file
-}
-
-// ===== VIDEO =====
-
-function generateVideo(i, imgPath) {
-  const output = `${TMP}/videos/video_${i}.mp4`
-
-  execSync(`
-    ffmpeg -y -loop 1 -i ${imgPath} -t 5 \
-    -vf "scale=1280:720,format=yuv420p" \
-    -pix_fmt yuv420p ${output}
-  `)
-
-  return output
-}
-
-// ===== AUDIO =====
-
-function generateVoice(i) {
-  const output = `${TMP}/audio/voice_${i}.mp3`
-
-  execSync(`
-    ffmpeg -y -f lavfi -i "sine=frequency=1000:duration=5" ${output}
-  `)
-
-  return output
-}
-
-function generateMusic() {
-  const output = `${TMP}/music/music.mp3`
-
-  execSync(`
-    ffmpeg -y -f lavfi -i "sine=frequency=200:duration=10" ${output}
-  `)
-
-  return output
-}
-
-// ===== MERGE =====
-
-function mergeVideos(videoFiles) {
-  const listFile = `${TMP}/videos/list.txt`
-
-  fs.writeFileSync(
-    listFile,
-    videoFiles.map(v => `file '${v}'`).join("\n")
-  )
-
-  const output = `${TMP}/merged.mp4`
-
-  execSync(`
-    ffmpeg -y -f concat -safe 0 -i ${listFile} -c copy ${output}
-  `)
-
-  return output
-}
-
-function finalMerge(video, voices, music) {
-  const output = `${TMP}/final.mp4`
-
-  execSync(`
-    ffmpeg -y -i ${video} -i ${voices[0]} -i ${voices[1]} -i ${music} \
-    -filter_complex "[1:a][2:a]concat=n=2:v=0:a=1[a];[3:a]volume=0.2[m];[a][m]amix=inputs=2" \
-    -c:v copy -c:a aac -shortest ${output}
-  `)
-
-  return output
-}
-
-// ===== TELEGRAM FLOW =====
+// ----------------------------------------
+// HELPER
+// ----------------------------------------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let userState = {}
 
-bot.onText(/do it/, async (msg) => {
+// ----------------------------------------
+// STEP 1 — Generate script from input
+// ----------------------------------------
+function generateScript(input) {
+  return (
+    `This video explores ${input}. ` +
+    `Scientists believe something unusual was discovered underground. ` +
+    `Thanks for watching`
+  )
+}
+
+// ----------------------------------------
+// STEP 2 — Split script into scenes
+// Each scene gets its own piece of the script
+// ----------------------------------------
+function splitScenes(script) {
+  const half = Math.floor(script.length / 2)
+
+  return [
+    {
+      script: script.slice(0, half),
+      imagePrompt: "cinematic underground tunnel, dramatic lighting, realistic",
+      motion: "slow zoom in"
+    },
+    {
+      script: script.slice(half),
+      imagePrompt: "hidden chamber, ancient structure, atmospheric lighting",
+      motion: "slow pan right"
+    }
+  ]
+}
+
+// ----------------------------------------
+// STEP 3 — Generate image for a scene
+// Uses a real image from picsum (fake but real file)
+// ----------------------------------------
+async function generateImage(scene, index) {
+  await sleep(2000)
+  const url = `https://picsum.photos/seed/${index + Date.now()}/1280/720`
+  const res = await fetch(url)
+  const buffer = await res.buffer()
+  const file = `/tmp/img_${index}.jpg`
+  fs.writeFileSync(file, buffer)
+  return file
+}
+
+// ----------------------------------------
+// STEP 4 — Generate fake video for a scene
+// ----------------------------------------
+async function generateVideo(index) {
+  await sleep(2000)
+  const file = `/tmp/video_${index}.mp4`
+  fs.writeFileSync(file, Buffer.from([
+    0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70
+  ]))
+  return file
+}
+
+// ----------------------------------------
+// STEP 5 — Generate fake audio for a scene
+// ----------------------------------------
+async function generateAudio(index) {
+  await sleep(1500)
+  const file = `/tmp/audio_${index}.mp3`
+  fs.writeFileSync(file, Buffer.from("fake audio"))
+  return file
+}
+
+// ----------------------------------------
+// STEP 6 — Generate fake background music
+// ----------------------------------------
+async function generateMusic() {
+  await sleep(1500)
+  const file = `/tmp/music.mp3`
+  fs.writeFileSync(file, Buffer.from("fake music"))
+  return file
+}
+
+// ----------------------------------------
+// TRIGGER — User sends "do it"
+// ----------------------------------------
+bot.onText(/^do it$/i, (msg) => {
   const chatId = msg.chat.id
-  userState[chatId] = "waiting"
-  await bot.sendMessage(chatId, "Send theme, link, or text")
+  userState[chatId] = { step: "waiting_input" }
+  bot.sendMessage(chatId, "Send me a theme, link, or topic to create the video about.")
 })
 
+// ----------------------------------------
+// MAIN FLOW — User sends their topic
+// ----------------------------------------
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id
 
-  if (userState[chatId] !== "waiting") return
-  userState[chatId] = null
+  // Ignore if user is not in the right state
+  if (!userState[chatId] || userState[chatId].step !== "waiting_input") return
+
+  // Ignore the trigger message itself
+  if (/^do it$/i.test(msg.text)) return
 
   const input = msg.text
+  userState[chatId].step = "processing"
 
   try {
-    ensureDirs()
 
-    // 1. SCRIPT
-    await bot.sendMessage(chatId, "Creating script")
+    // --- SCRIPT ---
+    await bot.sendMessage(chatId, "✍️ Creating script...")
+    await sleep(1500)
+    const script = generateScript(input)
+    await bot.sendMessage(chatId, `📄 Script:\n\n${script}`)
 
-    const scriptArray = generateScript(input)
-    const fullScript = scriptArray.join(" ")
+    // --- SCENES ---
+    await bot.sendMessage(chatId, "🎬 Splitting into scenes...")
+    await sleep(1000)
+    const scenes = splitScenes(script)
 
-    await bot.sendMessage(chatId, fullScript)
-
-    // 2. SCENES
-    const scenes = splitScenes(scriptArray)
-
-    let breakdown = ""
-
-    scenes.forEach((scene, i) => {
-      breakdown += `Scene ${i + 1}\n`
-      breakdown += `Script: ${scene.script}\n`
-      breakdown += `Image prompt: ${scene.imagePrompt}\n`
-      breakdown += `Video motion prompt: ${scene.motionPrompt}\n\n`
+    let sceneText = ""
+    scenes.forEach((s, i) => {
+      sceneText += `Scene ${i + 1}\n`
+      sceneText += `Script: ${s.script}\n`
+      sceneText += `Image prompt: ${s.imagePrompt}\n`
+      sceneText += `Motion: ${s.motion}\n\n`
     })
+    await bot.sendMessage(chatId, sceneText)
 
-    await bot.sendMessage(chatId, breakdown)
-
-    // 3. IMAGES
-    await bot.sendMessage(chatId, "Creating images")
-
-    let images = []
+    // --- IMAGES ---
+    await bot.sendMessage(chatId, "🖼 Creating images...")
     for (let i = 0; i < scenes.length; i++) {
-      const img = await generateImage(i)
-      images.push(img)
-      await bot.sendPhoto(chatId, img)
+      const img = await generateImage(scenes[i], i)
+      await bot.sendPhoto(chatId, img, { caption: `Image ${i + 1} — ${scenes[i].imagePrompt}` })
     }
 
-    // 4. VIDEOS
-    await bot.sendMessage(chatId, "Creating videos")
-
-    let videos = []
-    for (let i = 0; i < images.length; i++) {
-      const vid = generateVideo(i, images[i])
-      videos.push(vid)
-      await bot.sendVideo(chatId, vid)
-    }
-
-    // 5. VOICE
-    await bot.sendMessage(chatId, "Creating voice")
-
-    let voices = []
+    // --- VIDEOS ---
+    await bot.sendMessage(chatId, "🎥 Creating videos...")
     for (let i = 0; i < scenes.length; i++) {
-      const voice = generateVoice(i)
-      voices.push(voice)
-      await bot.sendAudio(chatId, voice)
+      const vid = await generateVideo(i)
+      await bot.sendDocument(chatId, vid, { caption: `Video ${i + 1}` })
     }
 
-    // 6. MUSIC
-    await bot.sendMessage(chatId, "Creating background music")
+    // --- VOICE ---
+    await bot.sendMessage(chatId, "🎙 Creating voice...")
+    for (let i = 0; i < scenes.length; i++) {
+      const audio = await generateAudio(i)
+      await bot.sendAudio(chatId, audio, { caption: `Voice ${i + 1}` })
+    }
 
-    const music = generateMusic()
-    await bot.sendAudio(chatId, music)
+    // --- MUSIC ---
+    await bot.sendMessage(chatId, "🎵 Creating background music...")
+    const music = await generateMusic()
+    await bot.sendAudio(chatId, music, { caption: "Background music" })
 
-    // 7. FINAL
-    await bot.sendMessage(chatId, "Rendering final video")
+    // --- DONE ---
+    await bot.sendMessage(chatId, "✅ Flow complete! All pieces generated in correct order.\n\nReady for real AI in Phase 2.")
 
-    const merged = mergeVideos(videos)
-    const finalVideo = finalMerge(merged, voices, music)
-
-    await bot.sendVideo(chatId, finalVideo)
-
-    cleanTmp()
+    userState[chatId].step = "done"
 
   } catch (err) {
-    console.log(err)
-    await bot.sendMessage(chatId, "FAILED ❌")
+    console.error("Pipeline error:", err)
+    await bot.sendMessage(chatId, "❌ Something went wrong. Try sending 'do it' again.")
+    userState[chatId] = {}
   }
 })
