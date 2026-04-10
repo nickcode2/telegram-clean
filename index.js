@@ -57,8 +57,6 @@ const CAMERA_TECHNIQUES = [
 // Scene 1 always uses the most cinematic opener
 const OPENING_CAMERA = CAMERA_TECHNIQUES.find(c => c.name === "Boom Up Push In")
 
-const PEOPLE_CYCLE = [true, true, true, false, true, true, true, false, false]
-const hasPeople = i => PEOPLE_CYCLE[i % PEOPLE_CYCLE.length]
 
 
 // ─────────────────────────────────────────
@@ -257,22 +255,20 @@ async function buildScenes(rawScript, totalScenes, style, topic) {
 
   const setup = Array.from({ length: totalScenes }, (_, i) => ({
     index: i,
-    hasPeople: hasPeople(i),
     isFirst: i === 0,
     script: texts[i] || `Scene ${i + 1} about ${topic}`
   }))
 
   const setupList = setup.map((s, i) =>
-    `Scene ${i + 1}${s.isFirst ? " [OPENING — epic wide, massive scale, breathtaking]" : ""}: "${s.script}"
-People: ${s.hasPeople ? "YES — 1-3 people in physical action, NEVER talking to each other, NEVER facing each other" : "NO people — pure environment or objects"}
-${s.isFirst ? "Camera: MUST be Boom Up Push In" : `Camera: choose the best from the list for this scene`}`
+    `Scene ${i + 1}${s.isFirst ? " [OPENING — MUST be aerial or extreme wide establishing shot showing massive scale]" : ""}: "${s.script}"
+${s.isFirst ? "Camera: MUST use: camera booms up and pushes in" : "Camera: choose best from list"}`
   ).join("\n\n")
 
   const raw = await callClaude(
     `Write cinematic image prompts and choose camera movements for YouTube documentary scenes.
 You write like a cinematographer obsessed with this exact subject.
 
-AVAILABLE CAMERA TECHNIQUES (choose best per scene, Scene 1 must be Boom Up Push In):
+AVAILABLE CAMERA TECHNIQUES (choose best per scene, Scene 1 MUST be "camera booms up and pushes in"):
 ${cameraList}
 
 VISUAL STYLE — apply consistently to every scene:
@@ -285,17 +281,16 @@ Consistency tag: ${style.consistencyTag}
 Avoid in all scenes: ${style.avoid}
 
 IMAGE PROMPT RULES:
-1. Minimum 100 words per prompt — specific, immersive, cinematic
-2. Scene 1 MUST be wide/aerial/epic establishing shot — show massive scale
-3. The prompt must FEEL like the topic — write with the emotional vibe embedded
+1. Minimum 100 words per prompt — specific, immersive, visceral
+2. Scene 1 MUST be aerial or extreme wide shot — show massive scale of the subject
+3. The prompt must FEEL the topic — write with the emotional DNA embedded in every detail
 4. Photorealistic photography ONLY — no CGI, no illustration, no 3D render
-5. Include: exact location type, time of day, atmosphere, specific objects, lighting direction, depth of field
-6. People: action only — excavating, running, operating equipment, observing — NEVER conversation poses
-7. NEVER: violence, blood, weapons, nudity — documentary-safe always
-8. Choose the camera technique that best serves what's happening in this specific scene
+5. Include: exact location geography, time of day, atmospheric conditions, objects that tell the story, lighting source, camera angle
+6. NEVER: violence, blood, nudity — documentary-safe
+7. Choose the camera technique that best serves what is happening in each specific scene
 
 Return ONLY valid JSON — no markdown:
-{"scenes":[{"imagePrompt":"100+ words","motionPrompt":"exact chosen camera motion string","cameraName":"chosen camera name"}]}`,
+{"scenes":[{"imagePrompt":"100+ words","motionPrompt":"exact camera motion string","cameraName":"chosen camera name"}]}`,
     `Build ${totalScenes} scenes. Topic: ${topic}\n\n${setupList}`,
     3000
   )
@@ -529,7 +524,7 @@ async function generateThumbnail(topic, script, chatId) {
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       input: {
-        prompt: `Dramatic cinematic epic wide shot about ${topic}, breathtaking scale, atmospheric, 4K, no people, no text, no watermark, golden dramatic lighting`,
+        prompt: `Dramatic cinematic epic wide shot about ${topic}, breathtaking scale, atmospheric, 4K, no text, no watermark, golden dramatic lighting`,
         width: 1280, height: 720, output_format: "jpg", output_quality: 95
       }
     })
@@ -552,58 +547,67 @@ async function generateThumbnail(topic, script, chatId) {
 
   const W = 1280, H = 720
 
-  // Person: 95% height, head near top, centered, bottom slightly cut
-  const personH = Math.round(H * 0.95)
+  // Person: tall enough that bottom of person aligns with bottom of frame
+  // No visible cut — the person naturally runs to the edge
+  const personH = Math.round(H * 1.05)  // slightly taller than frame so bottom is off-screen naturally
   const personBuf = await sharp("/tmp/assets/thumb_person.png")
     .resize({ height: personH, fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .toBuffer()
   const pMeta = await sharp(personBuf).metadata()
-  const personW = pMeta.width || 550
+  const personW = pMeta.width || 560
   const personX = Math.round((W - personW) / 2)
-  const personY = 8  // head near very top
+  // Position so person bottom goes off-screen bottom — head near top
+  const personY = Math.round(H * 0.02)
 
-  // Composite background + person
+  // Composite background + person — person overflows bottom naturally
   const compositePath = "/tmp/assets/thumb_composite.jpg"
   await sharp("/tmp/assets/thumb_bg.jpg")
     .resize(W, H)
-    .composite([{ input: personBuf, left: Math.max(0, personX), top: personY, blend: "over" }])
+    .composite([{
+      input: personBuf,
+      left: Math.max(0, personX),
+      top: personY,
+      blend: "over"
+    }])
     .jpeg({ quality: 95 })
     .toFile(compositePath)
 
-  // Add purple box + text via ffmpeg drawtext (works reliably on Linux)
-  const boxW = Math.round(W * 0.78)
-  const boxH = 100
+  // Purple box: 82% width, centered, at 68% from top
+  // Text: dark navy (#0A0A3A) bold — matches the example exactly
+  const boxW = Math.round(W * 0.82)
+  const boxH = 108
   const boxX = Math.round((W - boxW) / 2)
-  const boxY = Math.round(H * 0.70)
-  const fontSize = Math.max(36, Math.min(65, Math.round(65 * (10 / Math.max(phrase.length, 10)))))
-  const safePhrase = phrase.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/[<>]/g, "")
-  const textY = boxY + Math.round(boxH / 2) - Math.round(fontSize / 2)
+  const boxY = Math.round(H * 0.68)
 
+  // Font size: fills box width — scale down for longer phrases
+  const charCount = phrase.length
+  const fontSize = Math.max(40, Math.min(72, Math.round(72 * (12 / Math.max(charCount, 12)))))
+  const textCenterY = boxY + Math.round(boxH / 2) - Math.round(fontSize * 0.38)
+
+  const safePhrase = phrase.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/[<>\\]/g, "")
   const thumbPath = "/tmp/assets/thumbnail.jpg"
 
-  // Try with DejaVu font, fallback to no fontfile
-  try {
-    execSync(
-      `ffmpeg -y -i "${compositePath}" -vf "` +
-      `drawbox=x=${boxX - 7}:y=${boxY - 7}:w=${boxW + 14}:h=${boxH + 14}:color=0x3A0066@1.0:t=fill,` +
-      `drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=0x8800EE@1.0:t=fill,` +
-      `drawbox=x=${boxX + boxW - 30}:y=${boxY}:w=30:h=${boxH}:color=0x5500AA@1.0:t=fill,` +
-      `drawbox=x=${boxX}:y=${boxY + boxH + 8}:w=${Math.round(boxW * 0.38)}:h=7:color=0x5500AA@1.0:t=fill,` +
-      `drawtext=text='${safePhrase}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${textY}:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf` +
-      `" -q:v 2 "${thumbPath}"`
-    )
-  } catch {
-    // Fallback without fontfile specification
-    execSync(
-      `ffmpeg -y -i "${compositePath}" -vf "` +
-      `drawbox=x=${boxX - 7}:y=${boxY - 7}:w=${boxW + 14}:h=${boxH + 14}:color=0x3A0066@1.0:t=fill,` +
-      `drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=0x8800EE@1.0:t=fill,` +
-      `drawbox=x=${boxX + boxW - 30}:y=${boxY}:w=30:h=${boxH}:color=0x5500AA@1.0:t=fill,` +
-      `drawbox=x=${boxX}:y=${boxY + boxH + 8}:w=${Math.round(boxW * 0.38)}:h=7:color=0x5500AA@1.0:t=fill,` +
-      `drawtext=text='${safePhrase}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${textY}` +
-      `" -q:v 2 "${thumbPath}"`
-    )
+  // Find available bold font
+  let fontArg = ""
+  const fontPaths = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"
+  ]
+  for (const fp of fontPaths) {
+    if (fs.existsSync(fp)) { fontArg = `:fontfile=${fp}`; break }
   }
+
+  // Draw: dark outer stroke → bright purple box → darker right cap → accent line below → bold dark text
+  const vf = [
+    `drawbox=x=${boxX - 8}:y=${boxY - 8}:w=${boxW + 16}:h=${boxH + 16}:color=0x3A0066@1.0:t=fill`,
+    `drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=0x9900FF@1.0:t=fill`,
+    `drawbox=x=${boxX + boxW - 35}:y=${boxY}:w=35:h=${boxH}:color=0x6600BB@1.0:t=fill`,
+    `drawbox=x=${boxX + 4}:y=${boxY + boxH + 6}:w=${Math.round(boxW * 0.40)}:h=8:color=0x6600BB@1.0:t=fill`,
+    `drawtext=text='${safePhrase}':fontsize=${fontSize}:fontcolor=0x0A0A3A${fontArg}:x=(w-text_w)/2:y=${textCenterY}:font=Bold`
+  ].join(",")
+
+  execSync(`ffmpeg -y -i "${compositePath}" -vf "${vf}" -q:v 1 "${thumbPath}"`)
 
   console.log("Thumbnail done.")
   return thumbPath
@@ -657,7 +661,7 @@ bot.on("message", async msg => {
     const scenes = await buildScenes(rawScript, TOTAL_SCENES, style, topic)
     let plan = ""
     scenes.forEach((s, i) => {
-      plan += `Scene ${i + 1}: ${s.cameraName}${i === 0 ? " 🔥" : ""} ${s.hasPeople ? "👥" : "🏔"}\n`
+      plan += `Scene ${i + 1}: ${s.cameraName}${i === 0 ? " 🔥" : ""}\n`
     })
     await bot.sendMessage(chatId, plan)
 
