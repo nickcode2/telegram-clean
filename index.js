@@ -243,13 +243,11 @@ Return ONLY valid JSON — no markdown, no backticks:
 
 
 // ─────────────────────────────────────────
-// STEP 3 — SCENE BREAKDOWN (Claude picks camera + writes prompts)
-// Claude selects the best camera technique for each scene
-// Scene 1 always gets Boom Up Push In
+// STEP 3 — SCENE BREAKDOWN
 // ─────────────────────────────────────────
 async function buildScenes(rawScript, totalScenes, style, topic) {
   const matches = rawScript.match(/\[SCENE \d+\][^\[]+/g) || []
-  const texts = matches.map(s => s.replace(/\[SCENE \d+\]/, "").trim())
+  const texts = matches.map(s => s.replace(/\*?\*?\[SCENE \d+\]\*?\*?/, "").trim())
 
   const cameraList = CAMERA_TECHNIQUES.map(c => `- ${c.name}: "${c.motion}"`).join("\n")
 
@@ -260,49 +258,42 @@ async function buildScenes(rawScript, totalScenes, style, topic) {
   }))
 
   const setupList = setup.map((s, i) =>
-    `Scene ${i + 1}${s.isFirst ? " [OPENING — MUST be aerial or extreme wide establishing shot showing massive scale]" : ""}: "${s.script}"
-${s.isFirst ? "Camera: MUST use: camera booms up and pushes in" : "Camera: choose best from list"}`
+    `Scene ${i + 1}${s.isFirst ? " [OPENING — aerial or extreme wide shot showing massive scale]" : ""}: "${s.script}"
+Camera: ${s.isFirst ? "camera booms up and pushes in" : "choose best from list"}`
   ).join("\n\n")
 
   const raw = await callClaude(
-    `Write cinematic image prompts and choose camera movements for YouTube documentary scenes.
-You write like a cinematographer obsessed with this exact subject.
+    `You write image prompts for a text-to-image AI (Flux).
 
-AVAILABLE CAMERA TECHNIQUES (choose best per scene, Scene 1 MUST be "camera booms up and pushes in"):
-${cameraList}
+For each scene, read the script line and write a 100-word prompt describing the PHYSICAL SCENE of what that script is about.
 
-VISUAL STYLE — apply consistently to every scene:
+Example: if the script says "In 1947 a crash near Roswell changed history" — describe the New Mexico desert at night, metallic debris scattered across dry cracked earth, military jeeps with headlights, dramatic moonlight, dust in the air. NOT a person talking about it.
+
+VISUAL STYLE to apply to every scene:
 Color palette: ${style.colorPalette}
 Lighting: ${style.lighting}
 Atmosphere: ${style.atmosphere}
 Mood: ${style.mood}
-Style: ${style.styleTag}
-Consistency tag: ${style.consistencyTag}
-Avoid in all scenes: ${style.avoid}
+Consistency: ${style.consistencyTag}
+Avoid: ${style.avoid}
 
-IMAGE PROMPT RULES:
-1. Minimum 100 words per prompt — expand the script into a vivid, specific, cinematic visual scene
-2. Add interesting details that make the image come alive — specific objects, specific weather, specific lighting, unexpected elements that fit the story
-3. Show what the script describes but make it visually dramatic and specific — not generic
-4. Photorealistic photography, cinematic quality, high detail
-5. Apply the visual style palette and lighting to every prompt
-6. No text, no watermarks, no logos in image
+AVAILABLE CAMERA TECHNIQUES (Scene 1 MUST be "camera booms up and pushes in"):
+${cameraList}
 
 Return ONLY valid JSON — no markdown:
-{"scenes":[{"imagePrompt":"100+ words, vivid and specific","motionPrompt":"exact camera motion string","cameraName":"chosen camera name"}]}`,
-    `Build ${totalScenes} scenes. Topic: ${topic}\n\n${setupList}`,
-    3000
+{"scenes":[{"imagePrompt":"100 words describing the physical scene","motionPrompt":"exact camera motion","cameraName":"chosen camera name"}]}`,
+    `Build ${totalScenes} scenes for topic: ${topic}\n\n${setupList}`,
+    2000
   )
 
   const data = safeJSON(raw)
   return setup.map((s, i) => {
     const sceneData = data.scenes[i] || {}
-    // Force scene 1 to always use Boom Up Push In
     const motion = s.isFirst ? OPENING_CAMERA.motion : (sceneData.motionPrompt || CAMERA_TECHNIQUES[i % CAMERA_TECHNIQUES.length].motion)
     const cameraName = s.isFirst ? OPENING_CAMERA.name : (sceneData.cameraName || "Pan Tilt Down")
     return {
       ...s,
-      imagePrompt: sceneData.imagePrompt || `${s.script}, ${style.styleTag}, photorealistic, ${style.consistencyTag}`,
+      imagePrompt: sceneData.imagePrompt || `${s.script}, ${style.styleTag}, photorealistic`,
       motion,
       cameraName
     }
