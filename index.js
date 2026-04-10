@@ -421,6 +421,7 @@ bot.on("message", async msg => {
         const voicePath = await generateVoice(s.script, i)
         const audioDuration = getDuration(voicePath)
         const img = await generateImage(s.imagePrompt, i, chatId)
+        await bot.sendMessage(chatId, `🖼 Image prompt used:\n\n${s.imagePrompt}`)
         const vidPath = await generateVideo(img, s.motion, i, chatId)
         const elapsed = Math.round((Date.now() - startTime) / 1000)
         sceneResults.push({ videoPath: vidPath, voicePath, audioDuration })
