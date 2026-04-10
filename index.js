@@ -239,20 +239,24 @@ async function generateImage(prompt, index, chatId) {
 // STEP 5 — VIDEO (Kling v2.6)
 // Pass image as URL directly — avoids base64 size issues
 // ─────────────────────────────────────────
-async function generateVideo(imagePath, motionPrompt, index, chatId) {
+async function generateVideo(imageUrl, imagePath, motionPrompt, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  // Resize to exactly 1280x720 to force 16:9 aspect ratio in Kling
-  const resizedPath = `/tmp/images/img_${index}_1280x720.jpg`
-  execSync(`ffmpeg -y -i "${imagePath}" -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2" "${resizedPath}"`)
-
-  const b64 = `data:image/jpeg;base64,${fs.readFileSync(resizedPath).toString("base64")}`
-
-  console.log(`Video ${index + 1}: sending 1280x720 image to Kling`)
+  // Pass the Flux image URL directly — already 1280x720 (16:9)
+  // Also set aspect_ratio explicitly even though schema says it may be ignored
+  console.log(`Video ${index + 1}: sending to Kling as URL`)
   const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ input: { start_image: b64, prompt: motionPrompt, duration: 5, generate_audio: true } })
+    body: JSON.stringify({
+      input: {
+        start_image: imageUrl,
+        prompt: motionPrompt,
+        duration: 5,
+        aspect_ratio: "16:9",
+        generate_audio: true
+      }
+    })
   })
   const pred = await res.json()
   console.log("Kling response:", JSON.stringify(pred).slice(0, 200))
@@ -449,7 +453,7 @@ bot.on("message", async msg => {
         const img = await generateImage(s.imagePrompt, i, chatId)
         await bot.sendMessage(chatId, `🖼 Image prompt used:\n\n${s.imagePrompt}`)
         await bot.sendPhoto(chatId, img.path, { caption: "📸 Flux generated this (before Kling)" })
-        const vidPath = await generateVideo(img.path, s.motion, i, chatId)
+        const vidPath = await generateVideo(img.url, img.path, s.motion, i, chatId)
         const elapsed = Math.round((Date.now() - startTime) / 1000)
         sceneResults.push({ videoPath: vidPath, voicePath, audioDuration })
         await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Done in ${elapsed}s`)
