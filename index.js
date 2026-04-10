@@ -15,7 +15,7 @@ const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
 const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
-const TOTAL_SCENES = 1
+const TOTAL_SCENES = 2
 const TARGET_SCENE_SECONDS = 5
 const STEP_TIMEOUT_MS = 8 * 60 * 1000
 
@@ -205,18 +205,26 @@ Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosph
 
 
 // ─────────────────────────────────────────
+// IPHONE PHOTO STYLE — appended to every image prompt
+// ─────────────────────────────────────────
+const IPHONE_STYLE_SUFFIX = `\ncaptured as if accidentally photographed on a handheld iPhone, natural smartphone photo aesthetic, no cinematic grading, no dramatic lighting, no professional setup.\nGround level close perspective, 1x iPhone lens look, slightly imperfect framing as if someone nearby quickly took the photo. Main subject with clear action. Secondary subjects reacting or interacting. Environment visible but not staged.\nLighting must feel like real smartphone exposure. Flat natural light. No dramatic shadows. Slight highlight clipping in brightest areas. Uneven shadow transitions. Mild texture noise in darker areas. Realistic skin pores and imperfect texture. Slight sensor grain. Soft contrast. Limited dynamic range. No cinematic contrast. No editorial lighting. No stylized color grading. Natural color balance.\nComposition must feel candid, not staged, not a movie still. Preserve realistic proportions and anatomy. No fantasy elements. Strictly period accurate clothing and tools only.`
+
+
+// ─────────────────────────────────────────
 // STEP 4 — IMAGE (Flux 2 Max)
 // ─────────────────────────────────────────
 async function generateImage(prompt, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
-  console.log(`Image ${index + 1}: ${prompt.slice(0, 80)}...`)
+
+  const fullPrompt = prompt + IPHONE_STYLE_SUFFIX
+  console.log(`Image ${index + 1}: ${fullPrompt.slice(0, 120)}...`)
 
   const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       input: {
-        prompt,
+        prompt: fullPrompt,
         aspect_ratio: "16:9",
         width: 1344,
         height: 768,
