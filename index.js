@@ -15,10 +15,12 @@ bot.on("polling_error", (err) => console.error("Polling error:", err.message))
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
+// NOTE: Railway variable is REPLICATE_API_TOKEN
+const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let userState = {}
 
-// Create temp folders
 fs.mkdirSync("/tmp/images", { recursive: true })
 fs.mkdirSync("/tmp/videos", { recursive: true })
 fs.mkdirSync("/tmp/voices", { recursive: true })
@@ -28,8 +30,36 @@ console.log("Bot is running.")
 
 
 // ─────────────────────────────────────────
+// REPLICATE POLLING HELPER
+// Polls any prediction until done or failed
+// Times out after 10 minutes to avoid infinite loops
+// ─────────────────────────────────────────
+async function pollReplicate(predictionId, label) {
+  const maxWait = 10 * 60 * 1000 // 10 minutes max
+  const start = Date.now()
+
+  while (true) {
+    if (Date.now() - start > maxWait) {
+      throw new Error(`${label} timed out after 10 minutes`)
+    }
+
+    await sleep(6000)
+
+    const res = await fetch(
+      `https://api.replicate.com/v1/predictions/${predictionId}`,
+      { headers: { Authorization: `Bearer ${REPLICATE_TOKEN}` } }
+    )
+    const result = await res.json()
+    console.log(`${label} status: ${result.status}`)
+
+    if (result.status === "succeeded") return result
+    if (result.status === "failed") throw new Error(`${label} failed: ${result.error}`)
+  }
+}
+
+
+// ─────────────────────────────────────────
 // GOOGLE DRIVE
-// Uploads any file to your shared VideoBot folder
 // ─────────────────────────────────────────
 function getDriveClient() {
   const credentials = JSON.parse(process.env.GDRIVE_CREDENTIALS)
@@ -42,18 +72,15 @@ function getDriveClient() {
 
 async function createSessionFolder(sessionName) {
   const drive = getDriveClient()
-  const parentId = process.env.DRIVE_FOLDER_ID // Your VideoBot folder
-
   const res = await drive.files.create({
     requestBody: {
       name: sessionName,
       mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId]
+      parents: [process.env.DRIVE_FOLDER_ID]
     },
     fields: "id, webViewLink"
   })
-
-  console.log(`Session folder created: ${sessionName}`)
+  console.log(`Drive folder created: ${sessionName}`)
   return res.data
 }
 
@@ -61,20 +88,14 @@ async function uploadToDrive(filePath, fileName, mimeType, folderId) {
   try {
     const drive = getDriveClient()
     const res = await drive.files.create({
-      requestBody: {
-        name: fileName,
-        parents: [folderId]
-      },
-      media: {
-        mimeType,
-        body: fs.createReadStream(filePath)
-      },
+      requestBody: { name: fileName, parents: [folderId] },
+      media: { mimeType, body: fs.createReadStream(filePath) },
       fields: "id, webViewLink"
     })
-    console.log(`✅ Saved to Drive: ${fileName}`)
+    console.log(`Saved to Drive: ${fileName}`)
     return res.data
   } catch (err) {
-    console.error(`❌ Drive upload failed for ${fileName}:`, err.message)
+    console.error(`Drive upload failed for ${fileName}:`, err.message)
     return null
   }
 }
@@ -82,24 +103,17 @@ async function uploadToDrive(filePath, fileName, mimeType, folderId) {
 
 // ─────────────────────────────────────────
 // STEP 1 — SCRIPT GENERATION
-// Reads URL articles or plain text/themes
-// Uses OpenAI to write a proper 10-second script
+// Reads URL or plain text, writes 10-second script
 // ─────────────────────────────────────────
 async function generateScript(input) {
-  console.log("Generating script with OpenAI...")
+  console.log("Generating script...")
 
   let context = input
 
-  // If it's a URL, fetch and read the article
   if (input.startsWith("http://") || input.startsWith("https://")) {
     try {
-      console.log("Fetching article from URL...")
-      const res = await fetch(input, {
-        headers: { "User-Agent": "Mozilla/5.0" }
-      })
+      const res = await fetch(input, { headers: { "User-Agent": "Mozilla/5.0" } })
       const html = await res.text()
-
-      // Strip all HTML tags to get readable text
       const text = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -107,11 +121,10 @@ async function generateScript(input) {
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 4000)
-
       context = `Article content:\n${text}`
       console.log("Article fetched.")
     } catch (err) {
-      console.log("Could not fetch URL, using as topic:", err.message)
+      console.log("Could not fetch URL:", err.message)
       context = `Topic: ${input}`
     }
   }
@@ -124,7 +137,7 @@ async function generateScript(input) {
         content: `You are a YouTube Shorts scriptwriter.
 Write a dramatic, engaging voiceover script for a 10-second video.
 Rules:
-- Maximum 40 words
+- Maximum 40 words total
 - 2 sentences max
 - Dramatic and engaging tone
 - Must end with exactly: Thanks for watching
@@ -148,8 +161,6 @@ Rules:
 
 // ─────────────────────────────────────────
 // STEP 2 — SCENE BREAKDOWN
-// OpenAI splits script into 2 scenes
-// Each gets a real image prompt and motion prompt
 // ─────────────────────────────────────────
 async function splitScenes(script) {
   console.log("Splitting into scenes...")
@@ -160,44 +171,31 @@ async function splitScenes(script) {
       {
         role: "system",
         content: `Split a script into 2 scenes for a short video.
-Return ONLY valid JSON. No markdown. No explanation. No backticks.
-Format:
+Return ONLY valid JSON. No markdown. No backticks. No explanation.
+Format exactly:
 {
   "scene1": {
-    "script": "first part of script",
-    "imagePrompt": "very detailed cinematic photorealistic image, 4K, dramatic lighting, no text, no watermark",
+    "script": "first part",
+    "imagePrompt": "detailed cinematic photorealistic image, 4K, dramatic lighting, no text, no watermark",
     "motionPrompt": "specific camera movement"
   },
   "scene2": {
-    "script": "second part of script",
-    "imagePrompt": "very detailed cinematic photorealistic image, 4K, dramatic lighting, no text, no watermark",
+    "script": "second part",
+    "imagePrompt": "detailed cinematic photorealistic image, 4K, dramatic lighting, no text, no watermark",
     "motionPrompt": "specific camera movement"
   }
 }`
       },
-      {
-        role: "user",
-        content: `Split this into 2 scenes:\n\n${script}`
-      }
+      { role: "user", content: `Split this into 2 scenes:\n\n${script}` }
     ],
     max_tokens: 600,
     temperature: 0.7
   })
 
-  const raw = completion.choices[0].message.content.trim()
-  const data = JSON.parse(raw)
-
+  const data = JSON.parse(completion.choices[0].message.content.trim())
   return [
-    {
-      script: data.scene1.script,
-      imagePrompt: data.scene1.imagePrompt,
-      motion: data.scene1.motionPrompt
-    },
-    {
-      script: data.scene2.script,
-      imagePrompt: data.scene2.imagePrompt,
-      motion: data.scene2.motionPrompt
-    }
+    { script: data.scene1.script, imagePrompt: data.scene1.imagePrompt, motion: data.scene1.motionPrompt },
+    { script: data.scene2.script, imagePrompt: data.scene2.imagePrompt, motion: data.scene2.motionPrompt }
   ]
 }
 
@@ -207,14 +205,14 @@ Format:
 // Flux 2 Max on Replicate
 // ─────────────────────────────────────────
 async function generateImage(prompt, index) {
-  console.log(`Generating image ${index + 1}...`)
+  console.log(`Starting image ${index + 1}...`)
 
-  const startRes = await fetch(
+  const res = await fetch(
     "https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions",
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.REPLICATE_API_KEY}`,
+        Authorization: `Bearer ${REPLICATE_TOKEN}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -229,25 +227,15 @@ async function generateImage(prompt, index) {
     }
   )
 
-  let result = await startRes.json()
+  const prediction = await res.json()
+  console.log("Image prediction started:", prediction.id)
 
-  if (result.detail?.includes("Invalid token") || result.detail?.includes("Authentication")) {
-    throw new Error("Replicate API key is invalid. Fix REPLICATE_API_KEY in Railway Variables.")
+  if (!prediction.id) {
+    console.error("Replicate response:", JSON.stringify(prediction))
+    throw new Error(`Image ${index + 1} could not start. Check REPLICATE_API_TOKEN in Railway.`)
   }
 
-  while (result.status !== "succeeded" && result.status !== "failed") {
-    await sleep(4000)
-    const poll = await fetch(
-      `https://api.replicate.com/v1/predictions/${result.id}`,
-      { headers: { Authorization: `Bearer ${process.env.REPLICATE_API_KEY}` } }
-    )
-    result = await poll.json()
-    console.log(`Image ${index + 1}: ${result.status}`)
-  }
-
-  if (result.status === "failed") {
-    throw new Error(`Image ${index + 1} failed: ${result.error}`)
-  }
+  const result = await pollReplicate(prediction.id, `Image ${index + 1}`)
 
   const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
   const imgRes = await fetch(imageUrl)
@@ -261,20 +249,20 @@ async function generateImage(prompt, index) {
 
 // ─────────────────────────────────────────
 // STEP 4 — VIDEO GENERATION
-// Kling 1.6 on Replicate — image to 5 second video
+// Kling v2.6 on Replicate — image to 5 second video
 // ─────────────────────────────────────────
 async function generateVideo(imagePath, motionPrompt, index) {
-  console.log(`Generating video ${index + 1}...`)
+  console.log(`Starting video ${index + 1}...`)
 
   const imageBuffer = fs.readFileSync(imagePath)
   const base64Image = `data:image/jpeg;base64,${imageBuffer.toString("base64")}`
 
-  const startRes = await fetch(
-    "https://api.replicate.com/v1/models/klingai/kling-1.6-standard/predictions",
+  const res = await fetch(
+    "https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions",
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.REPLICATE_API_KEY}`,
+        Authorization: `Bearer ${REPLICATE_TOKEN}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -282,29 +270,21 @@ async function generateVideo(imagePath, motionPrompt, index) {
           image: base64Image,
           prompt: motionPrompt,
           duration: 5,
-          aspect_ratio: "16:9",
-          cfg_scale: 0.5
+          aspect_ratio: "16:9"
         }
       })
     }
   )
 
-  let result = await startRes.json()
+  const prediction = await res.json()
+  console.log("Video prediction started:", prediction.id)
 
-  // Kling takes 2–5 minutes — keep polling
-  while (result.status !== "succeeded" && result.status !== "failed") {
-    await sleep(8000)
-    const poll = await fetch(
-      `https://api.replicate.com/v1/predictions/${result.id}`,
-      { headers: { Authorization: `Bearer ${process.env.REPLICATE_API_KEY}` } }
-    )
-    result = await poll.json()
-    console.log(`Video ${index + 1}: ${result.status}`)
+  if (!prediction.id) {
+    console.error("Kling response:", JSON.stringify(prediction))
+    throw new Error(`Video ${index + 1} could not start. Check REPLICATE_API_TOKEN in Railway.`)
   }
 
-  if (result.status === "failed") {
-    throw new Error(`Video ${index + 1} failed: ${result.error}`)
-  }
+  const result = await pollReplicate(prediction.id, `Video ${index + 1}`)
 
   const videoUrl = Array.isArray(result.output) ? result.output[0] : result.output
   const vidRes = await fetch(videoUrl)
@@ -318,7 +298,7 @@ async function generateVideo(imagePath, motionPrompt, index) {
 
 // ─────────────────────────────────────────
 // STEP 5 — VOICE GENERATION
-// ElevenLabs — Ellis voice, found automatically
+// ElevenLabs — Ellis voice
 // ─────────────────────────────────────────
 async function getEllisVoiceId() {
   const res = await fetch("https://api.elevenlabs.io/v1/voices", {
@@ -327,6 +307,7 @@ async function getEllisVoiceId() {
   const data = await res.json()
   const ellis = data.voices?.find((v) => v.name.toLowerCase().includes("ellis"))
   if (!ellis) throw new Error("Ellis voice not found. Check ELEVENLABS_API_KEY in Railway.")
+  console.log(`Ellis voice ID: ${ellis.voice_id}`)
   return ellis.voice_id
 }
 
@@ -361,10 +342,9 @@ async function generateVoice(text, voiceId, index) {
 
 // ─────────────────────────────────────────
 // STEP 6 — BACKGROUND MUSIC
-// Downloads your 10-minute track from Google Drive
 // ─────────────────────────────────────────
 async function downloadMusic() {
-  console.log("Downloading music from Google Drive...")
+  console.log("Downloading music...")
 
   const driveUrl = process.env.MUSIC_DRIVE_URL
   const match =
@@ -399,17 +379,13 @@ function getDuration(filePath) {
 
 function trimVideoToAudio(videoPath, audioDuration, index) {
   const out = `/tmp/videos/video_trimmed_${index}.mp4`
-  execSync(
-    `ffmpeg -y -i "${videoPath}" -t ${audioDuration} -c:v libx264 -preset fast -crf 23 "${out}"`
-  )
+  execSync(`ffmpeg -y -i "${videoPath}" -t ${audioDuration} -c:v libx264 -preset fast -crf 23 "${out}"`)
   return out
 }
 
 function combineSceneVoice(videoPath, voicePath, index) {
   const out = `/tmp/final/scene_${index}.mp4`
-  execSync(
-    `ffmpeg -y -i "${videoPath}" -i "${voicePath}" -c:v copy -c:a aac -shortest "${out}"`
-  )
+  execSync(`ffmpeg -y -i "${videoPath}" -i "${voicePath}" -c:v copy -c:a aac -shortest "${out}"`)
   return out
 }
 
@@ -429,7 +405,6 @@ function assembleFinalVideo(scenePaths, musicPath, totalDuration) {
     `-filter_complex "[0:a]volume=1.0[voice];[1:a]volume=0.15[music];[voice][music]amix=inputs=2:duration=shortest[aout]" ` +
     `-map 0:v -map "[aout]" -c:v copy -c:a aac "${finalPath}"`
   )
-
   return finalPath
 }
 
@@ -446,8 +421,6 @@ bot.onText(/^do it$/i, (msg) => {
 
 // ─────────────────────────────────────────
 // MAIN PIPELINE
-// Nothing is sent to Telegram except status messages and the final video
-// Everything is saved to Google Drive
 // ─────────────────────────────────────────
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id
@@ -459,11 +432,10 @@ bot.on("message", async (msg) => {
 
   try {
 
-    // Create session folder on Drive
+    // Drive session folder
     const sessionName = `Video_${new Date().toISOString().slice(0, 16).replace("T", "_")}`
     const sessionFolder = await createSessionFolder(sessionName)
     const folderId = sessionFolder.id
-    await bot.sendMessage(chatId, `📁 Session folder created on Google Drive: ${sessionName}`)
 
     // ── SCRIPT ──
     await bot.sendMessage(chatId, "✍️ Reading your input and writing script...")
@@ -487,29 +459,29 @@ bot.on("message", async (msg) => {
       const img = await generateImage(scenes[i].imagePrompt, i)
       imagePaths.push(img)
       await uploadToDrive(img, `image_${i + 1}.jpg`, "image/jpeg", folderId)
-      await bot.sendMessage(chatId, `✅ Image ${i + 1} saved to Drive`)
+      await bot.sendMessage(chatId, `✅ Image ${i + 1} done → saved to Drive`)
     }
 
     // ── VIDEOS ──
-    await bot.sendMessage(chatId, "🎥 Generating videos with Kling AI... (~3-5 min each) ⏳")
+    await bot.sendMessage(chatId, "🎥 Generating videos with Kling v2.6... (~3-5 min each) ⏳")
     const videoPaths = []
     for (let i = 0; i < scenes.length; i++) {
       await bot.sendMessage(chatId, `⏳ Video ${i + 1} of ${scenes.length} generating... please wait`)
       const vid = await generateVideo(imagePaths[i], scenes[i].motion, i)
       videoPaths.push(vid)
       await uploadToDrive(vid, `video_raw_${i + 1}.mp4`, "video/mp4", folderId)
-      await bot.sendMessage(chatId, `✅ Video ${i + 1} saved to Drive`)
+      await bot.sendMessage(chatId, `✅ Video ${i + 1} done → saved to Drive`)
     }
 
     // ── VOICE ──
-    await bot.sendMessage(chatId, "🎙 Generating voice narration with Ellis...")
+    await bot.sendMessage(chatId, "🎙 Generating voice with Ellis...")
     const voiceId = await getEllisVoiceId()
     const voicePaths = []
     for (let i = 0; i < scenes.length; i++) {
       const voice = await generateVoice(scenes[i].script, voiceId, i)
       voicePaths.push(voice)
       await uploadToDrive(voice, `voice_${i + 1}.mp3`, "audio/mpeg", folderId)
-      await bot.sendMessage(chatId, `✅ Voice ${i + 1} saved to Drive`)
+      await bot.sendMessage(chatId, `✅ Voice ${i + 1} done → saved to Drive`)
     }
 
     // ── TRIM & COMBINE ──
@@ -534,17 +506,15 @@ bot.on("message", async (msg) => {
     await bot.sendMessage(chatId, `🎬 Rendering final video (${totalDuration.toFixed(1)}s)...`)
     const finalVideo = assembleFinalVideo(sceneFinalPaths, musicPath, totalDuration)
 
-    // Upload final video to Drive
+    // Upload ONLY final video to Drive permanently
     const uploaded = await uploadToDrive(finalVideo, "FINAL_VIDEO.mp4", "video/mp4", folderId)
 
-    // ── SEND FINAL VIDEO TO TELEGRAM ──
-    await bot.sendVideo(chatId, finalVideo, {
-      caption: "🎬 Your video is ready!"
-    })
+    // Send final video to Telegram
+    await bot.sendVideo(chatId, finalVideo, { caption: "🎬 Your video is ready!" })
 
     await bot.sendMessage(
       chatId,
-      `✅ Video saved to Google Drive\n📁 Folder: ${sessionName}\n🔗 ${uploaded?.webViewLink || "Check your VideoBot folder"}`
+      `✅ Final video saved to Google Drive\n📁 ${sessionName}\n🔗 ${uploaded?.webViewLink || "Check your VideoBot folder"}`
     )
 
     userState[chatId].step = "done"
