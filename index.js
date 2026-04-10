@@ -46,26 +46,21 @@ console.log("Bot running.")
 // ─────────────────────────────────────────
 // 19 CAMERA TECHNIQUES (Slow Motion removed)
 // ─────────────────────────────────────────
+// 13 Kling-native camera movements — proven to work with any scene type
 const CAMERA_TECHNIQUES = [
-  { name: "Handheld", imageStyle: "handheld camera shot, slight tilt, raw documentary feel", motionStyle: "handheld shaky cam, slight organic movement" },
-  { name: "Drone Aerial", imageStyle: "aerial drone shot from high above, bird's eye view, sweeping landscape", motionStyle: "slow drone pullback reveal from high above" },
-  { name: "Dolly Zoom", imageStyle: "vertigo dolly zoom, background stretching effect, unsettling depth", motionStyle: "dolly zoom effect, subject stays same size while background changes" },
-  { name: "POV", imageStyle: "first person POV shot, immersive ground-level perspective walking through scene", motionStyle: "first person POV camera moving forward into the scene" },
-  { name: "Security Cam", imageStyle: "security camera wide angle, static surveillance look, slight grain, high contrast", motionStyle: "static security camera, no movement, slight grain" },
-  { name: "News Broadcast", imageStyle: "news broadcast camera angle, professional journalism, slightly zoomed formal framing", motionStyle: "news camera slow deliberate zoom in" },
-  { name: "Time Lapse", imageStyle: "time lapse photography, motion blur on moving elements, static locked camera", motionStyle: "time lapse movement, fast flowing environment, static camera" },
-  { name: "Crane Shot", imageStyle: "crane shot starting from low angle, grand reveal perspective", motionStyle: "crane slowly rising from ground level revealing full scene" },
-  { name: "Tracking Shot", imageStyle: "tracking shot camera follows alongside subject in motion, background motion blur", motionStyle: "smooth tracking shot camera follows subject from the side" },
-  { name: "Extreme Close Up", imageStyle: "extreme macro close up, tiny details fill entire frame, razor-thin depth of field", motionStyle: "extreme close up slow push in revealing intricate details" },
-  { name: "Dutch Angle", imageStyle: "dutch angle tilt shot, camera rotated 18 degrees, unsettling dramatic framing", motionStyle: "dutch angle tilt camera slowly rotating" },
-  { name: "Shoulder Mount", imageStyle: "shoulder mounted camera, slight rhythmic bounce, journalistic urgency", motionStyle: "shoulder mount realistic bounce and sway walking with camera" },
-  { name: "360 Orbit", imageStyle: "360 orbit perspective, camera circling central subject, dynamic circular framing", motionStyle: "slow 360 degree orbit around main subject" },
-  { name: "Rack Focus", imageStyle: "rack focus, sharp foreground subject, beautifully blurred background bokeh", motionStyle: "pull focus from blurred background to sharp foreground" },
-  { name: "Top Down", imageStyle: "overhead top down bird's eye view, looking straight down from directly above", motionStyle: "overhead camera slowly pulling back revealing more below" },
-  { name: "Low Angle", imageStyle: "low angle ground level shot, looking dramatically upward, powerful heroic perspective", motionStyle: "low angle camera tilting up slowly, dramatic upward reveal" },
-  { name: "Whip Pan", imageStyle: "whip pan style, horizontal motion blur across frame, kinetic energy", motionStyle: "fast whip pan sweep from left to right across scene" },
-  { name: "Underwater", imageStyle: "underwater camera, light rays filtering through water, dreamy caustic distortion", motionStyle: "underwater camera slowly rising toward surface" },
-  { name: "Steadicam", imageStyle: "steadicam glide shot, perfectly smooth floating movement forward", motionStyle: "steadicam smooth glide forward, perfectly stable cinematic" }
+  { name: "Pan Right",           motionStyle: "camera pans right" },
+  { name: "Pan and Tilt Down",   motionStyle: "camera pans right and tilts down" },
+  { name: "Zoom In",             motionStyle: "the camera zooms in" },
+  { name: "Zoom Out",            motionStyle: "The camera zooms out" },
+  { name: "Tilt Up",             motionStyle: "camera tilts up" },
+  { name: "Tilt Down",           motionStyle: "camera tilts down" },
+  { name: "Orbit",               motionStyle: "camera orbits around" },
+  { name: "Orbit Push In",       motionStyle: "camera orbits around and pushes in" },
+  { name: "Rotate Around",       motionStyle: "the camera rotates around the subject" },
+  { name: "Follow Subject",      motionStyle: "the camera follows the subject moving" },
+  { name: "Boom Up Push In",     motionStyle: "camera booms up and pushes in" },
+  { name: "Handheld",            motionStyle: "handheld device filming" },
+  { name: "Long Shot",           motionStyle: "positioned at a Long Shot" }
 ]
 
 const getCam = i => CAMERA_TECHNIQUES[i % CAMERA_TECHNIQUES.length]
@@ -235,7 +230,7 @@ async function buildScenes(rawScript, totalScenes, style, topic) {
   }))
 
   const setupList = setup.map((s, i) =>
-    `Scene ${i + 1}: "${s.script}" | Camera: ${s.camera.name} (${s.camera.imageStyle}) | People: ${
+    `Scene ${i + 1}: "${s.script}" | Camera movement: ${s.camera.name} (${s.camera.motionStyle}) | People: ${
       s.isReporter ? "REPORTER_SCENE — write REPORTER_SCENE as imagePrompt" :
       s.hasPeople ? "YES — 1-3 people in physical action, NOT talking, NOT facing each other, always show environment around them" :
       "NO people — environment, objects, or landscape only"
@@ -261,7 +256,7 @@ IMAGE PROMPT RULES:
 - People rules: if included, show in purposeful action (excavating, observing horizon, running, working equipment, reacting to something off-camera) — NEVER two people facing each other in dialogue — NEVER isolated close-up portrait without environment — always show significant environment
 - Include in every prompt: specific location/geography, weather, time of day, specific objects that tell the story, lighting direction, camera angle, depth of field
 - FORBIDDEN: stock photo aesthetic, plain backgrounds, studio lighting, people looking at camera, conversation poses, generic landscapes
-- Reporter scenes: write exactly REPORTER_SCENE as the imagePrompt
+- SAFETY (critical): Never include violence, weapons, blood, death, abuse, nudity, or anything that could be flagged by content moderation. Keep all scenes visually safe and documentary-appropriate.
 
 MOTION PROMPT: specific Kling camera movement, 15-25 words, match the camera technique
 
@@ -282,32 +277,64 @@ Return ONLY valid JSON — no markdown:
 
 // ─────────────────────────────────────────
 // STEP 4 — IMAGE (Flux 2 Max)
+// Auto-retries with safer prompt if content is flagged (E005)
 // ─────────────────────────────────────────
+function sanitizePrompt(prompt) {
+  // Remove words that commonly trigger content filters
+  return prompt
+    .replace(/\b(dead|death|dying|corpse|blood|gore|weapon|gun|knife|bomb|explosion|terror|torture|abuse|violent|massacre|murder|kill|war crime|genocide|naked|nude|sexual)\b/gi, "")
+    .replace(/\s+/g, " ").trim()
+}
+
 async function generateImage(prompt, avoid, index) {
-  const full = `${prompt}. Shot on professional cinema camera. Ultra high resolution. No CGI. No illustration. No 3D. No text. No watermarks. Avoid: ${avoid}.`
+  const attempts = [
+    // Attempt 1: full prompt
+    `${prompt}. Shot on professional cinema camera. Ultra high resolution. No CGI. No illustration. No 3D. No text. No watermarks. Avoid: ${avoid}.`,
+    // Attempt 2: sanitized prompt
+    `${sanitizePrompt(prompt)}. Cinematic photorealistic. Dramatic lighting. No text. No watermarks.`,
+    // Attempt 3: very safe generic fallback based on first 50 chars
+    `Dramatic cinematic landscape scene, ${prompt.slice(0, 60)}. Documentary photography. No people. No text.`
+  ]
 
-  const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      input: { prompt: full, width: 1280, height: 720, output_format: "jpg", output_quality: 95 }
-    })
-  })
-  const pred = await res.json()
-  if (!pred.id) throw new Error(`Image ${index + 1} failed. Check REPLICATE_API_TOKEN.`)
+  for (let attempt = 0; attempt < attempts.length; attempt++) {
+    try {
+      const full = attempts[attempt]
+      console.log(`Image ${index + 1} attempt ${attempt + 1}...`)
 
-  const result = await pollReplicate(pred.id, `Image ${index + 1}`)
-  const url = Array.isArray(result.output) ? result.output[0] : result.output
-  const buf = await (await fetch(url)).buffer()
-  const path = `/tmp/images/img_${index}.jpg`
-  fs.writeFileSync(path, buf)
-  return path
+      const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: { prompt: full, width: 1280, height: 720, output_format: "jpg", output_quality: 95 }
+        })
+      })
+      const pred = await res.json()
+      if (!pred.id) throw new Error(`No prediction ID. Check REPLICATE_API_TOKEN.`)
+
+      const result = await pollReplicate(pred.id, `Image ${index + 1}`)
+      const url = Array.isArray(result.output) ? result.output[0] : result.output
+      const buf = await (await fetch(url)).buffer()
+      const path = `/tmp/images/img_${index}.jpg`
+      fs.writeFileSync(path, buf)
+      console.log(`Image ${index + 1} done on attempt ${attempt + 1}`)
+      return path
+
+    } catch (err) {
+      const isSensitive = err.message.includes("E005") || err.message.includes("sensitive") || err.message.includes("flagged")
+      if (isSensitive && attempt < attempts.length - 1) {
+        console.log(`Image ${index + 1}: Content flagged (attempt ${attempt + 1}), retrying with safer prompt...`)
+        continue
+      }
+      throw err
+    }
+  }
 }
 
 
 // ─────────────────────────────────────────
 // STEP 4B — REPORTER LIP-SYNC (Kling)
-// Your photo + ElevenLabs audio → animated lip-synced video
+// Tries multiple param conventions since Kling model names vary
+// Logs full response so we can debug if it fails
 // ─────────────────────────────────────────
 async function generateReporterLipSync(audioPath, index) {
   const photoId = REPORTER_PHOTO_IDS[reporterPhotoIndex % REPORTER_PHOTO_IDS.length]
@@ -322,32 +349,48 @@ async function generateReporterLipSync(audioPath, index) {
 
   console.log(`Starting reporter lip-sync (scene ${index + 1})...`)
 
-  const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-lip-sync/predictions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      input: {
-        face_image: imageBase64,
-        audio: audioBase64,
-        mode: "std",
-        aspect_ratio: "16:9"
-      }
+  // Try multiple param name conventions — Kling models differ across deployments
+  const paramSets = [
+    { face_image: imageBase64, audio: audioBase64, mode: "std", aspect_ratio: "16:9" },
+    { image: imageBase64, audio: audioBase64, mode: "std", aspect_ratio: "16:9" },
+    { face_image: imageBase64, driven_audio: audioBase64, aspect_ratio: "16:9" },
+    { image: imageBase64, audio_input: audioBase64, aspect_ratio: "16:9" }
+  ]
+
+  for (let p = 0; p < paramSets.length; p++) {
+    const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-lip-sync/predictions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ input: paramSets[p] })
     })
-  })
 
-  const pred = await res.json()
-  if (!pred.id) {
-    console.error("Lip-sync response:", JSON.stringify(pred))
-    throw new Error(`Lip-sync failed: ${pred.detail || "unknown — check model params"}`)
+    const pred = await res.json()
+    console.log(`Lip-sync param set ${p + 1}:`, JSON.stringify(pred).slice(0, 300))
+
+    if (!pred.id) {
+      if (p < paramSets.length - 1) {
+        console.log(`Param set ${p + 1} rejected, trying next...`)
+        continue
+      }
+      throw new Error(`Lip-sync failed all param sets. Last error: ${pred.detail || JSON.stringify(pred).slice(0, 200)}`)
+    }
+
+    try {
+      const result = await pollReplicate(pred.id, `Lip-sync ${index + 1}`)
+      const url = Array.isArray(result.output) ? result.output[0] : result.output
+      const buf = await (await fetch(url)).buffer()
+      const path = `/tmp/videos/reporter_${index}.mp4`
+      fs.writeFileSync(path, buf)
+      console.log(`Lip-sync done (params ${p + 1}): ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+      return { path, isLipSync: true }
+    } catch (pollErr) {
+      if (p < paramSets.length - 1) {
+        console.log(`Param set ${p + 1} failed during poll: ${pollErr.message}, trying next...`)
+        continue
+      }
+      throw pollErr
+    }
   }
-
-  const result = await pollReplicate(pred.id, `Lip-sync ${index + 1}`)
-  const url = Array.isArray(result.output) ? result.output[0] : result.output
-  const buf = await (await fetch(url)).buffer()
-  const path = `/tmp/videos/reporter_${index}.mp4`
-  fs.writeFileSync(path, buf)
-  console.log(`Lip-sync done: ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
-  return { path, isLipSync: true }
 }
 
 
