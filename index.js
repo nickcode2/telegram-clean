@@ -422,6 +422,8 @@ bot.on("message", async msg => {
         const audioDuration = getDuration(voicePath)
         const img = await generateImage(s.imagePrompt, i, chatId)
         await bot.sendMessage(chatId, `🖼 Image prompt used:\n\n${s.imagePrompt}`)
+        // Send the Flux image so we can see what Flux generated BEFORE Kling
+        await bot.sendPhoto(chatId, img, { caption: "📸 This is what Flux generated (before Kling)" })
         const vidPath = await generateVideo(img, s.motion, i, chatId)
         const elapsed = Math.round((Date.now() - startTime) / 1000)
         sceneResults.push({ videoPath: vidPath, voicePath, audioDuration })
