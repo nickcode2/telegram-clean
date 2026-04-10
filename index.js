@@ -15,8 +15,11 @@ bot.on("polling_error", (err) => console.error("Polling error:", err.message))
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-// NOTE: Railway variable is REPLICATE_API_TOKEN
+// Railway variable is REPLICATE_API_TOKEN
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
+
+// Ellis voice ID — hardcoded directly, no search needed
+const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let userState = {}
@@ -30,12 +33,10 @@ console.log("Bot is running.")
 
 
 // ─────────────────────────────────────────
-// REPLICATE POLLING HELPER
-// Polls any prediction until done or failed
-// Times out after 10 minutes to avoid infinite loops
+// REPLICATE POLLING — with 10 minute timeout
 // ─────────────────────────────────────────
 async function pollReplicate(predictionId, label) {
-  const maxWait = 10 * 60 * 1000 // 10 minutes max
+  const maxWait = 10 * 60 * 1000
   const start = Date.now()
 
   while (true) {
@@ -103,7 +104,7 @@ async function uploadToDrive(filePath, fileName, mimeType, folderId) {
 
 // ─────────────────────────────────────────
 // STEP 1 — SCRIPT GENERATION
-// Reads URL or plain text, writes 10-second script
+// Reads URL articles or plain text
 // ─────────────────────────────────────────
 async function generateScript(input) {
   console.log("Generating script...")
@@ -228,15 +229,12 @@ async function generateImage(prompt, index) {
   )
 
   const prediction = await res.json()
-  console.log("Image prediction started:", prediction.id)
-
   if (!prediction.id) {
     console.error("Replicate response:", JSON.stringify(prediction))
     throw new Error(`Image ${index + 1} could not start. Check REPLICATE_API_TOKEN in Railway.`)
   }
 
   const result = await pollReplicate(prediction.id, `Image ${index + 1}`)
-
   const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
   const imgRes = await fetch(imageUrl)
   const buffer = await imgRes.buffer()
@@ -249,7 +247,7 @@ async function generateImage(prompt, index) {
 
 // ─────────────────────────────────────────
 // STEP 4 — VIDEO GENERATION
-// Kling v2.6 on Replicate — image to 5 second video
+// Kling v2.6 on Replicate
 // ─────────────────────────────────────────
 async function generateVideo(imagePath, motionPrompt, index) {
   console.log(`Starting video ${index + 1}...`)
@@ -277,15 +275,12 @@ async function generateVideo(imagePath, motionPrompt, index) {
   )
 
   const prediction = await res.json()
-  console.log("Video prediction started:", prediction.id)
-
   if (!prediction.id) {
     console.error("Kling response:", JSON.stringify(prediction))
     throw new Error(`Video ${index + 1} could not start. Check REPLICATE_API_TOKEN in Railway.`)
   }
 
   const result = await pollReplicate(prediction.id, `Video ${index + 1}`)
-
   const videoUrl = Array.isArray(result.output) ? result.output[0] : result.output
   const vidRes = await fetch(videoUrl)
   const buffer = await vidRes.buffer()
@@ -298,24 +293,13 @@ async function generateVideo(imagePath, motionPrompt, index) {
 
 // ─────────────────────────────────────────
 // STEP 5 — VOICE GENERATION
-// ElevenLabs — Ellis voice
+// ElevenLabs — Ellis voice ID hardcoded
 // ─────────────────────────────────────────
-async function getEllisVoiceId() {
-  const res = await fetch("https://api.elevenlabs.io/v1/voices", {
-    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY }
-  })
-  const data = await res.json()
-  const ellis = data.voices?.find((v) => v.name.toLowerCase().includes("ellis"))
-  if (!ellis) throw new Error("Ellis voice not found. Check ELEVENLABS_API_KEY in Railway.")
-  console.log(`Ellis voice ID: ${ellis.voice_id}`)
-  return ellis.voice_id
-}
-
-async function generateVoice(text, voiceId, index) {
+async function generateVoice(text, index) {
   console.log(`Generating voice ${index + 1}...`)
 
   const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${ELLIS_VOICE_ID}`,
     {
       method: "POST",
       headers: {
@@ -330,7 +314,10 @@ async function generateVoice(text, voiceId, index) {
     }
   )
 
-  if (!res.ok) throw new Error(`ElevenLabs failed: ${res.status}. Check ELEVENLABS_API_KEY.`)
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`ElevenLabs failed (${res.status}): ${err}. Check ELEVENLABS_API_KEY in Railway.`)
+  }
 
   const buffer = await res.buffer()
   const filePath = `/tmp/voices/voice_${index}.mp3`
@@ -474,11 +461,10 @@ bot.on("message", async (msg) => {
     }
 
     // ── VOICE ──
-    await bot.sendMessage(chatId, "🎙 Generating voice with Ellis...")
-    const voiceId = await getEllisVoiceId()
+    await bot.sendMessage(chatId, "🎙 Generating voice narration with Ellis...")
     const voicePaths = []
     for (let i = 0; i < scenes.length; i++) {
-      const voice = await generateVoice(scenes[i].script, voiceId, i)
+      const voice = await generateVoice(scenes[i].script, i)
       voicePaths.push(voice)
       await uploadToDrive(voice, `voice_${i + 1}.mp3`, "audio/mpeg", folderId)
       await bot.sendMessage(chatId, `✅ Voice ${i + 1} done → saved to Drive`)
@@ -506,15 +492,14 @@ bot.on("message", async (msg) => {
     await bot.sendMessage(chatId, `🎬 Rendering final video (${totalDuration.toFixed(1)}s)...`)
     const finalVideo = assembleFinalVideo(sceneFinalPaths, musicPath, totalDuration)
 
-    // Upload ONLY final video to Drive permanently
+    // Upload final video to Drive
     const uploaded = await uploadToDrive(finalVideo, "FINAL_VIDEO.mp4", "video/mp4", folderId)
 
     // Send final video to Telegram
     await bot.sendVideo(chatId, finalVideo, { caption: "🎬 Your video is ready!" })
-
     await bot.sendMessage(
       chatId,
-      `✅ Final video saved to Google Drive\n📁 ${sessionName}\n🔗 ${uploaded?.webViewLink || "Check your VideoBot folder"}`
+      `✅ Saved to Google Drive\n📁 ${sessionName}\n🔗 ${uploaded?.webViewLink || "Check your VideoBot folder"}`
     )
 
     userState[chatId].step = "done"
