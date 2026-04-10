@@ -245,7 +245,7 @@ async function generateVideo(imageUrl, motionPrompt, index, chatId) {
   const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ input: { image: imageUrl, prompt: motionPrompt, duration: 5, aspect_ratio: "16:9" } })
+    body: JSON.stringify({ input: { start_image: imageUrl, prompt: motionPrompt, duration: 5, aspect_ratio: "16:9", generate_audio: false } })
   })
   const pred = await res.json()
   console.log("Kling response:", JSON.stringify(pred).slice(0, 200))
