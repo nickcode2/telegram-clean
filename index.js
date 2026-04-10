@@ -128,7 +128,8 @@ async function generateScript(input) {
     } catch { context = `Topic: ${input}` }
   }
 
-  const wordsPerScene = TARGET_SCENE_SECONDS <= 2 ? 8 : 14
+  // ElevenLabs speaks ~2.5 words per second — 10 words = ~4 seconds, safe for 5sec scene
+  const wordsPerScene = TARGET_SCENE_SECONDS <= 2 ? 6 : 10
 
   return await callClaude(
     `Write a YouTube voiceover script with ${TOTAL_SCENES} scene(s) of ~${TARGET_SCENE_SECONDS} seconds each.
