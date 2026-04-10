@@ -18,8 +18,8 @@ const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
 const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
 // ── VIDEO CONFIG ──
-const TOTAL_SCENES = 8
-const TARGET_SCENE_SECONDS = 2  // change to 5 for 30-second production
+const TOTAL_SCENES = 3
+const TARGET_SCENE_SECONDS = 5
 const STEP_TIMEOUT_MS = 8 * 60 * 1000  // 8 minutes max per step
 
 const THUMBNAIL_PNG_ID = "1xhXV1MY484aAdmZiA9a6zeDNkWUT9uQo"
@@ -206,13 +206,8 @@ Max ${wordsPerScene} words per scene.
 
 Structure:
 [SCENE 1]: Most explosive opening — massive scale, immediate impact. Max ${wordsPerScene} words.
-[SCENE 2]: Second shock. Max ${wordsPerScene} words.
-[SCENE 3]: Context that deepens it. Max ${wordsPerScene} words.
-[SCENE 4]: Key turning point. Max ${wordsPerScene} words.
-[SCENE 5]: Evidence or detail. Max ${wordsPerScene} words.
-[SCENE 6]: Consequence or impact. Max ${wordsPerScene} words.
-[SCENE 7]: Emotional punch. Max ${wordsPerScene} words.
-[SCENE 8]: Final close. Must end with: Thanks for watching. Max ${wordsPerScene} words.
+[SCENE 2]: The key revelation or turning point. Max ${wordsPerScene} words.
+[SCENE 3]: Final powerful close. Must end with: Thanks for watching. Max ${wordsPerScene} words.
 
 Rules:
 - Label every scene: [SCENE 1] text etc.
