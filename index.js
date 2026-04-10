@@ -370,6 +370,19 @@ function addMusicHD(vidPath, musicPath, dur) {
 // ─────────────────────────────────────────
 // TRIGGER
 // ─────────────────────────────────────────
+bot.onText(/^schema$/i, async msg => {
+  try {
+    const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6", {
+      headers: { Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}` }
+    })
+    const data = await res.json()
+    const schema = JSON.stringify(data?.latest_version?.openapi_schema?.components?.schemas?.Input?.properties || data, null, 2).slice(0, 3000)
+    await bot.sendMessage(msg.chat.id, `Kling v2.6 input schema:\n\n${schema}`)
+  } catch (e) {
+    await bot.sendMessage(msg.chat.id, `Error: ${e.message}`)
+  }
+})
+
 bot.onText(/^do it$/i, msg => {
   stoppedChats.delete(msg.chat.id)
   userState[msg.chat.id] = { step: "waiting_input" }
