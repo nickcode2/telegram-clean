@@ -215,10 +215,18 @@ async function generateImage(prompt, index, chatId) {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      input: { prompt, width: 1344, height: 768, output_format: "jpg", output_quality: 95 }
+      input: {
+        prompt,
+        aspect_ratio: "16:9",
+        width: 1344,
+        height: 768,
+        output_format: "jpg",
+        output_quality: 95
+      }
     })
   })
   const pred = await res.json()
+  console.log(`Flux prediction created:`, JSON.stringify(pred).slice(0, 300))
   if (!pred.id) throw new Error("Image failed to start — check REPLICATE_API_TOKEN")
 
   const result = await withTimeout(pollReplicate(pred.id, `Image ${index + 1}`, chatId), `Image ${index + 1}`)
@@ -228,7 +236,14 @@ async function generateImage(prompt, index, chatId) {
   const buf = await (await fetch(imageUrl)).buffer()
   const path = `/tmp/images/img_${index}.jpg`
   fs.writeFileSync(path, buf)
-  console.log(`Image ${index + 1} done`)
+
+  // Log actual dimensions to catch square image issues
+  try {
+    const dims = execSync(`identify -format "%wx%h" "${path}" 2>/dev/null || ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${path}" 2>/dev/null`).toString().trim()
+    console.log(`Image ${index + 1} done — dimensions: ${dims}`)
+  } catch {
+    console.log(`Image ${index + 1} done — could not read dimensions`)
+  }
 
   // Return both path and URL — Kling gets the URL directly (avoids base64 corruption)
   return { path, url: imageUrl }
@@ -242,8 +257,8 @@ async function generateImage(prompt, index, chatId) {
 async function generateVideo(imageUrl, imagePath, motionPrompt, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  // Pass the Flux image URL directly — already 1280x720 (16:9)
-  // Also set aspect_ratio explicitly even though schema says it may be ignored
+  // Pass the Flux image URL directly — already 1344x768 (16:9)
+  // aspect_ratio set explicitly as backup
   console.log(`Video ${index + 1}: sending to Kling as URL`)
   const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
     method: "POST",
