@@ -15,10 +15,7 @@ bot.on("polling_error", (err) => console.error("Polling error:", err.message))
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-// Railway variable is REPLICATE_API_TOKEN
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
-
-// Ellis voice ID — hardcoded directly, no search needed
 const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -33,7 +30,7 @@ console.log("Bot is running.")
 
 
 // ─────────────────────────────────────────
-// REPLICATE POLLING — with 10 minute timeout
+// REPLICATE POLLING
 // ─────────────────────────────────────────
 async function pollReplicate(predictionId, label) {
   const maxWait = 10 * 60 * 1000
@@ -43,16 +40,13 @@ async function pollReplicate(predictionId, label) {
     if (Date.now() - start > maxWait) {
       throw new Error(`${label} timed out after 10 minutes`)
     }
-
     await sleep(6000)
-
     const res = await fetch(
       `https://api.replicate.com/v1/predictions/${predictionId}`,
       { headers: { Authorization: `Bearer ${REPLICATE_TOKEN}` } }
     )
     const result = await res.json()
     console.log(`${label} status: ${result.status}`)
-
     if (result.status === "succeeded") return result
     if (result.status === "failed") throw new Error(`${label} failed: ${result.error}`)
   }
@@ -103,12 +97,10 @@ async function uploadToDrive(filePath, fileName, mimeType, folderId) {
 
 
 // ─────────────────────────────────────────
-// STEP 1 — SCRIPT GENERATION
-// Reads URL articles or plain text
+// STEP 1 — SCRIPT
 // ─────────────────────────────────────────
 async function generateScript(input) {
   console.log("Generating script...")
-
   let context = input
 
   if (input.startsWith("http://") || input.startsWith("https://")) {
@@ -203,7 +195,6 @@ Format exactly:
 
 // ─────────────────────────────────────────
 // STEP 3 — IMAGE GENERATION
-// Flux 2 Max on Replicate
 // ─────────────────────────────────────────
 async function generateImage(prompt, index) {
   console.log(`Starting image ${index + 1}...`)
@@ -217,22 +208,13 @@ async function generateImage(prompt, index) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        input: {
-          prompt,
-          width: 1280,
-          height: 720,
-          output_format: "jpg",
-          output_quality: 90
-        }
+        input: { prompt, width: 1280, height: 720, output_format: "jpg", output_quality: 90 }
       })
     }
   )
 
   const prediction = await res.json()
-  if (!prediction.id) {
-    console.error("Replicate response:", JSON.stringify(prediction))
-    throw new Error(`Image ${index + 1} could not start. Check REPLICATE_API_TOKEN in Railway.`)
-  }
+  if (!prediction.id) throw new Error(`Image ${index + 1} could not start. Check REPLICATE_API_TOKEN.`)
 
   const result = await pollReplicate(prediction.id, `Image ${index + 1}`)
   const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
@@ -240,14 +222,13 @@ async function generateImage(prompt, index) {
   const buffer = await imgRes.buffer()
   const filePath = `/tmp/images/img_${index}.jpg`
   fs.writeFileSync(filePath, buffer)
-  console.log(`Image ${index + 1} done.`)
   return filePath
 }
 
 
 // ─────────────────────────────────────────
 // STEP 4 — VIDEO GENERATION
-// Kling v2.6 on Replicate
+// Kling v2.6 — strips its own audio, we add ours later
 // ─────────────────────────────────────────
 async function generateVideo(imagePath, motionPrompt, index) {
   console.log(`Starting video ${index + 1}...`)
@@ -264,30 +245,29 @@ async function generateVideo(imagePath, motionPrompt, index) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        input: {
-          image: base64Image,
-          prompt: motionPrompt,
-          duration: 5,
-          aspect_ratio: "16:9"
-        }
+        input: { image: base64Image, prompt: motionPrompt, duration: 5, aspect_ratio: "16:9" }
       })
     }
   )
 
   const prediction = await res.json()
-  if (!prediction.id) {
-    console.error("Kling response:", JSON.stringify(prediction))
-    throw new Error(`Video ${index + 1} could not start. Check REPLICATE_API_TOKEN in Railway.`)
-  }
+  if (!prediction.id) throw new Error(`Video ${index + 1} could not start. Check REPLICATE_API_TOKEN.`)
 
   const result = await pollReplicate(prediction.id, `Video ${index + 1}`)
   const videoUrl = Array.isArray(result.output) ? result.output[0] : result.output
   const vidRes = await fetch(videoUrl)
   const buffer = await vidRes.buffer()
-  const filePath = `/tmp/videos/video_${index}.mp4`
-  fs.writeFileSync(filePath, buffer)
-  console.log(`Video ${index + 1} done.`)
-  return filePath
+
+  // Save raw Kling video first
+  const rawPath = `/tmp/videos/video_raw_${index}.mp4`
+  fs.writeFileSync(rawPath, buffer)
+
+  // Strip Kling's built-in audio — we will add voice + music ourselves
+  const silentPath = `/tmp/videos/video_${index}.mp4`
+  execSync(`ffmpeg -y -i "${rawPath}" -an -c:v copy "${silentPath}"`)
+  console.log(`Video ${index + 1} done (Kling audio stripped).`)
+
+  return silentPath
 }
 
 
@@ -315,8 +295,8 @@ async function generateVoice(text, index) {
   )
 
   if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`ElevenLabs failed (${res.status}): ${err}. Check ELEVENLABS_API_KEY in Railway.`)
+    const errText = await res.text()
+    throw new Error(`ElevenLabs failed (${res.status}): ${errText}`)
   }
 
   const buffer = await res.buffer()
@@ -332,7 +312,6 @@ async function generateVoice(text, index) {
 // ─────────────────────────────────────────
 async function downloadMusic() {
   console.log("Downloading music...")
-
   const driveUrl = process.env.MUSIC_DRIVE_URL
   const match =
     driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
@@ -356,6 +335,7 @@ async function downloadMusic() {
 // ─────────────────────────────────────────
 // FFMPEG HELPERS
 // ─────────────────────────────────────────
+
 function getDuration(filePath) {
   return parseFloat(
     execSync(
@@ -364,35 +344,72 @@ function getDuration(filePath) {
   )
 }
 
-function trimVideoToAudio(videoPath, audioDuration, index) {
+// Trim video to exact audio duration
+function trimVideoToMatchAudio(videoPath, audioDuration, index) {
   const out = `/tmp/videos/video_trimmed_${index}.mp4`
-  execSync(`ffmpeg -y -i "${videoPath}" -t ${audioDuration} -c:v libx264 -preset fast -crf 23 "${out}"`)
+  execSync(
+    `ffmpeg -y -i "${videoPath}" -t ${audioDuration} -c:v libx264 -preset fast -crf 23 "${out}"`
+  )
+  console.log(`Video ${index + 1} trimmed to ${audioDuration.toFixed(2)}s`)
   return out
 }
 
-function combineSceneVoice(videoPath, voicePath, index) {
+// Merge one video + one voice into one scene file
+// Uses -map to explicitly take video from input 0, audio from input 1
+// This completely replaces Kling's audio with the ElevenLabs voice
+function buildScene(videoPath, voicePath, index) {
   const out = `/tmp/final/scene_${index}.mp4`
-  execSync(`ffmpeg -y -i "${videoPath}" -i "${voicePath}" -c:v copy -c:a aac -shortest "${out}"`)
+  execSync(
+    `ffmpeg -y -i "${videoPath}" -i "${voicePath}" ` +
+    `-map 0:v -map 1:a ` +
+    `-c:v libx264 -preset fast -crf 23 -c:a aac -ar 44100 ` +
+    `-shortest "${out}"`
+  )
+  console.log(`Scene ${index + 1} built.`)
   return out
 }
 
-function assembleFinalVideo(scenePaths, musicPath, totalDuration) {
-  const concatFile = `/tmp/concat.txt`
-  fs.writeFileSync(concatFile, scenePaths.map((p) => `file '${p}'`).join("\n"))
+// Concatenate all scenes using filter_complex
+// This is more reliable than -f concat for audio
+function concatScenes(scenePaths) {
+  const out = `/tmp/final/concatenated.mp4`
+  const n = scenePaths.length
 
-  const concatenated = `/tmp/final/concatenated.mp4`
-  execSync(`ffmpeg -y -f concat -safe 0 -i "${concatFile}" -c copy "${concatenated}"`)
+  // Build input args: -i scene0.mp4 -i scene1.mp4 ...
+  const inputs = scenePaths.map(p => `-i "${p}"`).join(" ")
 
+  // Build filter: [0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[outv][outa]
+  const streams = scenePaths.map((_, i) => `[${i}:v][${i}:a]`).join("")
+  const filter = `${streams}concat=n=${n}:v=1:a=1[outv][outa]`
+
+  execSync(
+    `ffmpeg -y ${inputs} ` +
+    `-filter_complex "${filter}" ` +
+    `-map "[outv]" -map "[outa]" ` +
+    `-c:v libx264 -preset fast -crf 23 -c:a aac -ar 44100 "${out}"`
+  )
+  console.log("Scenes concatenated.")
+  return out
+}
+
+// Add background music underneath the voice
+// Voice stays at full volume, music at 15%
+function addMusic(videoPath, musicPath, totalDuration) {
+  const out = `/tmp/final/final_video.mp4`
+
+  // Trim music to exact video duration
   const musicTrimmed = `/tmp/final/music_trimmed.mp3`
   execSync(`ffmpeg -y -i "${musicPath}" -t ${totalDuration} -af "volume=0.15" "${musicTrimmed}"`)
 
-  const finalPath = `/tmp/final/final_video.mp4`
+  // Mix voice audio from video with background music
   execSync(
-    `ffmpeg -y -i "${concatenated}" -i "${musicTrimmed}" ` +
-    `-filter_complex "[0:a]volume=1.0[voice];[1:a]volume=0.15[music];[voice][music]amix=inputs=2:duration=shortest[aout]" ` +
-    `-map 0:v -map "[aout]" -c:v copy -c:a aac "${finalPath}"`
+    `ffmpeg -y -i "${videoPath}" -i "${musicTrimmed}" ` +
+    `-filter_complex "[0:a]volume=1.0[voice];[1:a]volume=0.15[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=0[aout]" ` +
+    `-map 0:v -map "[aout]" ` +
+    `-c:v copy -c:a aac -ar 44100 "${out}"`
   )
-  return finalPath
+  console.log("Music added. Final video ready.")
+  return out
 }
 
 
@@ -419,7 +436,7 @@ bot.on("message", async (msg) => {
 
   try {
 
-    // Drive session folder
+    // Create Drive session folder
     const sessionName = `Video_${new Date().toISOString().slice(0, 16).replace("T", "_")}`
     const sessionFolder = await createSessionFolder(sessionName)
     const folderId = sessionFolder.id
@@ -456,7 +473,7 @@ bot.on("message", async (msg) => {
       await bot.sendMessage(chatId, `⏳ Video ${i + 1} of ${scenes.length} generating... please wait`)
       const vid = await generateVideo(imagePaths[i], scenes[i].motion, i)
       videoPaths.push(vid)
-      await uploadToDrive(vid, `video_raw_${i + 1}.mp4`, "video/mp4", folderId)
+      await uploadToDrive(`/tmp/videos/video_raw_${i}.mp4`, `video_raw_${i + 1}.mp4`, "video/mp4", folderId)
       await bot.sendMessage(chatId, `✅ Video ${i + 1} done → saved to Drive`)
     }
 
@@ -470,32 +487,39 @@ bot.on("message", async (msg) => {
       await bot.sendMessage(chatId, `✅ Voice ${i + 1} done → saved to Drive`)
     }
 
-    // ── TRIM & COMBINE ──
-    await bot.sendMessage(chatId, "✂️ Cutting videos to match voice length...")
-    const sceneFinalPaths = []
+    // ── TRIM VIDEOS + BUILD SCENES ──
+    await bot.sendMessage(chatId, "✂️ Cutting videos to match voice and combining...")
+    const scenePaths = []
     let totalDuration = 0
 
     for (let i = 0; i < scenes.length; i++) {
       const audioDuration = getDuration(voicePaths[i])
       totalDuration += audioDuration
-      const trimmed = trimVideoToAudio(videoPaths[i], audioDuration, i)
-      const combined = combineSceneVoice(trimmed, voicePaths[i], i)
-      sceneFinalPaths.push(combined)
-      await bot.sendMessage(chatId, `✅ Scene ${i + 1} cut to ${audioDuration.toFixed(1)}s`)
+      console.log(`Scene ${i + 1}: audio is ${audioDuration.toFixed(2)}s`)
+
+      const trimmedVideo = trimVideoToMatchAudio(videoPaths[i], audioDuration, i)
+      const sceneFinal = buildScene(trimmedVideo, voicePaths[i], i)
+      scenePaths.push(sceneFinal)
+
+      await bot.sendMessage(chatId, `✅ Scene ${i + 1} ready (${audioDuration.toFixed(1)}s)`)
     }
+
+    // ── CONCATENATE ALL SCENES ──
+    await bot.sendMessage(chatId, "🔗 Joining scenes together...")
+    const concatenated = concatScenes(scenePaths)
 
     // ── MUSIC ──
     await bot.sendMessage(chatId, "🎵 Adding background music...")
     const musicPath = await downloadMusic()
 
     // ── FINAL ASSEMBLY ──
-    await bot.sendMessage(chatId, `🎬 Rendering final video (${totalDuration.toFixed(1)}s)...`)
-    const finalVideo = assembleFinalVideo(sceneFinalPaths, musicPath, totalDuration)
+    await bot.sendMessage(chatId, `🎬 Rendering final video (${totalDuration.toFixed(1)}s total)...`)
+    const finalVideo = addMusic(concatenated, musicPath, totalDuration)
 
-    // Upload final video to Drive
+    // Upload final to Drive
     const uploaded = await uploadToDrive(finalVideo, "FINAL_VIDEO.mp4", "video/mp4", folderId)
 
-    // Send final video to Telegram
+    // Send to Telegram
     await bot.sendVideo(chatId, finalVideo, { caption: "🎬 Your video is ready!" })
     await bot.sendMessage(
       chatId,
