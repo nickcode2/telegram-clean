@@ -199,16 +199,18 @@ async function generateScript(input) {
   const wordsPerScene = TARGET_SCENE_SECONDS <= 2 ? 8 : 14
 
   return await callClaude(
-    `Write a YouTube voiceover script for ${TOTAL_SCENES} scenes of ~${TARGET_SCENE_SECONDS} seconds each.
+    `Write a YouTube documentary voiceover script for ${TOTAL_SCENES} scenes of ~${TARGET_SCENE_SECONDS} seconds each.
 Max ${wordsPerScene} words per scene.
 
-Structure:
-[SCENE 1]: One powerful statement about the topic. Must end with: Thanks for watching. Max ${wordsPerScene} words.
+CRITICAL: Write in THIRD PERSON only. Describe events, facts, and places — never use "I", "we", "you". Write like a documentary narrator describing what happened, not a person talking about it.
+
+[SCENE 1]: A powerful third-person statement about the topic. Must end with: Thanks for watching. Max ${wordsPerScene} words.
 
 Rules:
 - Label every scene: [SCENE 1] text etc.
-- Declarative statements only — no questions
-- Write ONLY the 8 labeled scenes`,
+- Third person only — no "I found", "I discovered", "we see"
+- Describe EVENTS and FACTS
+- Write ONLY the labeled scenes`,
     `Write ${TOTAL_SCENES}-scene script about:\n\n${context}`,
     350
   )
@@ -279,17 +281,15 @@ Consistency tag: ${style.consistencyTag}
 Avoid in all scenes: ${style.avoid}
 
 IMAGE PROMPT RULES:
-1. Minimum 100 words per prompt — specific, immersive, visceral
-2. THIS IS A VISUAL DOCUMENTARY — show the WORLD and the EVENTS described in the script. Never show someone talking about it. Never generate a news anchor, presenter, reporter, or person facing the camera explaining something. Show the actual place, the actual objects, the actual environment of what is being described.
-3. Scene 1 MUST be aerial or extreme wide shot — show massive scale of the subject
-4. The prompt must FEEL the topic — write with the emotional DNA embedded in every detail
-5. Photorealistic photography ONLY — no CGI, no illustration, no 3D render
-6. Include: exact location geography, time of day, atmospheric conditions, specific objects that tell the story, lighting source, camera angle
-7. NEVER: violence, blood, nudity, talking heads, portrait shots, people looking at camera — documentary-safe
-8. Choose the camera technique that best serves what is happening in each specific scene
+1. Minimum 100 words per prompt — expand the script into a vivid, specific, cinematic visual scene
+2. Add interesting details that make the image come alive — specific objects, specific weather, specific lighting, unexpected elements that fit the story
+3. Show what the script describes but make it visually dramatic and specific — not generic
+4. Photorealistic photography, cinematic quality, high detail
+5. Apply the visual style palette and lighting to every prompt
+6. No text, no watermarks, no logos in image
 
 Return ONLY valid JSON — no markdown:
-{"scenes":[{"imagePrompt":"100+ words","motionPrompt":"exact camera motion string","cameraName":"chosen camera name"}]}`,
+{"scenes":[{"imagePrompt":"100+ words, vivid and specific","motionPrompt":"exact camera motion string","cameraName":"chosen camera name"}]}`,
     `Build ${totalScenes} scenes. Topic: ${topic}\n\n${setupList}`,
     3000
   )
