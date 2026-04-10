@@ -215,7 +215,7 @@ async function generateImage(prompt, index, chatId) {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      input: { prompt, width: 1280, height: 720, output_format: "jpg", output_quality: 95 }
+      input: { prompt, width: 1344, height: 768, output_format: "jpg", output_quality: 95 }
     })
   })
   const pred = await res.json()
