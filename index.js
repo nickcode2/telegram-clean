@@ -26,6 +26,16 @@ const REPORTER_SCENE_PNG_ID = "1Rb47BC7eWiQndjmZKkHKrvIaIjpViBZC"  // photo for 
 const THUMBNAIL_PNG_ID = "1xhXV1MY484aAdmZiA9a6zeDNkWUT9uQo"       // cutout for thumbnail
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+// Safely parse JSON even if OpenAI wraps it in markdown backticks
+const safeJSON = str => {
+  const clean = str.trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim()
+  return JSON.parse(clean)
+}
 let userState = {}
 let reporterSceneCount = 0
 
@@ -180,7 +190,7 @@ Return ONLY valid JSON. No markdown. No backticks.
     max_tokens: 300,
     temperature: 0.7
   })
-  return JSON.parse(r.choices[0].message.content.trim())
+  return safeJSON(r.choices[0].message.content)
 }
 
 
@@ -248,7 +258,7 @@ Return ONLY valid JSON:
     temperature: 0.7
   })
 
-  const data = JSON.parse(r.choices[0].message.content.trim())
+  const data = safeJSON(r.choices[0].message.content)
   return setup.map((s, i) => ({
     ...s,
     imagePrompt: data.scenes[i]?.imagePrompt || `${s.script}, ${style.styleTag}, photorealistic`,
