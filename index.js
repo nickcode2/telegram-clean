@@ -18,7 +18,7 @@ const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
 const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
 // ── VIDEO CONFIG ──
-const TOTAL_SCENES = 3
+const TOTAL_SCENES = 1
 const TARGET_SCENE_SECONDS = 5
 const STEP_TIMEOUT_MS = 8 * 60 * 1000  // 8 minutes max per step
 
@@ -203,9 +203,7 @@ async function generateScript(input) {
 Max ${wordsPerScene} words per scene.
 
 Structure:
-[SCENE 1]: Most explosive opening — massive scale, immediate impact. Max ${wordsPerScene} words.
-[SCENE 2]: The key revelation or turning point. Max ${wordsPerScene} words.
-[SCENE 3]: Final powerful close. Must end with: Thanks for watching. Max ${wordsPerScene} words.
+[SCENE 1]: One powerful statement about the topic. Must end with: Thanks for watching. Max ${wordsPerScene} words.
 
 Rules:
 - Label every scene: [SCENE 1] text etc.
@@ -282,12 +280,13 @@ Avoid in all scenes: ${style.avoid}
 
 IMAGE PROMPT RULES:
 1. Minimum 100 words per prompt — specific, immersive, visceral
-2. Scene 1 MUST be aerial or extreme wide shot — show massive scale of the subject
-3. The prompt must FEEL the topic — write with the emotional DNA embedded in every detail
-4. Photorealistic photography ONLY — no CGI, no illustration, no 3D render
-5. Include: exact location geography, time of day, atmospheric conditions, objects that tell the story, lighting source, camera angle
-6. NEVER: violence, blood, nudity — documentary-safe
-7. Choose the camera technique that best serves what is happening in each specific scene
+2. THIS IS A VISUAL DOCUMENTARY — show the WORLD and the EVENTS described in the script. Never show someone talking about it. Never generate a news anchor, presenter, reporter, or person facing the camera explaining something. Show the actual place, the actual objects, the actual environment of what is being described.
+3. Scene 1 MUST be aerial or extreme wide shot — show massive scale of the subject
+4. The prompt must FEEL the topic — write with the emotional DNA embedded in every detail
+5. Photorealistic photography ONLY — no CGI, no illustration, no 3D render
+6. Include: exact location geography, time of day, atmospheric conditions, specific objects that tell the story, lighting source, camera angle
+7. NEVER: violence, blood, nudity, talking heads, portrait shots, people looking at camera — documentary-safe
+8. Choose the camera technique that best serves what is happening in each specific scene
 
 Return ONLY valid JSON — no markdown:
 {"scenes":[{"imagePrompt":"100+ words","motionPrompt":"exact camera motion string","cameraName":"chosen camera name"}]}`,
