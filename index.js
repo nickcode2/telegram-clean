@@ -3,673 +3,764 @@ import fs from "fs"
 import fetch from "node-fetch"
 import { execSync } from "child_process"
 import OpenAI from "openai"
+import sharp from "sharp"
 
 // ─────────────────────────────────────────
 // SETUP
 // ─────────────────────────────────────────
 console.log("Starting bot...")
-
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true })
-bot.on("polling_error", (err) => console.error("Polling error:", err.message))
+bot.on("polling_error", err => console.error("Polling:", err.message))
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
 const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+// Pipeline config
+const TOTAL_SCENES = 6        // 30 seconds
+const REPORTER_EVERY = 4      // scene 4 is reporter (index 3)
+const TITLE_CARD_EVERY = 8    // every 8th scene gets title card (ready for longer videos)
+
+// Your Google Drive PNG file IDs
+const REPORTER_SCENE_PNG_ID = "1Rb47BC7eWiQndjmZKkHKrvIaIjpViBZC"  // photo for scene compositing
+const THUMBNAIL_PNG_ID = "1xhXV1MY484aAdmZiA9a6zeDNkWUT9uQo"       // cutout for thumbnail
+
+const sleep = ms => new Promise(r => setTimeout(r, ms))
 let userState = {}
+let reporterSceneCount = 0
 
-fs.mkdirSync("/tmp/images", { recursive: true })
-fs.mkdirSync("/tmp/videos", { recursive: true })
-fs.mkdirSync("/tmp/voices", { recursive: true })
-fs.mkdirSync("/tmp/final", { recursive: true })
-
+for (const d of ["/tmp/images", "/tmp/videos", "/tmp/voices", "/tmp/final", "/tmp/assets"]) {
+  fs.mkdirSync(d, { recursive: true })
+}
 console.log("Bot is running.")
 
 
 // ─────────────────────────────────────────
-// 20 CAMERA TECHNIQUES
-// Each has an image composition style and a video motion style
-// They rotate automatically per scene index
+// 20 CAMERA TECHNIQUES — rotate per scene
 // ─────────────────────────────────────────
 const CAMERA_TECHNIQUES = [
-  {
-    name: "Handheld",
-    imageStyle: "handheld camera shot, slight tilt, documentary feel, raw and real",
-    motionStyle: "handheld shaky camera, organic realistic movement, documentary style"
-  },
-  {
-    name: "Drone Aerial",
-    imageStyle: "aerial drone shot from high above, bird's eye view, sweeping landscape",
-    motionStyle: "slow drone pullback reveal, camera rises up showing full scene from above"
-  },
-  {
-    name: "Slow Motion",
-    imageStyle: "cinematic slow motion freeze frame, dramatic motion blur on edges",
-    motionStyle: "ultra slow motion, 240fps look, every detail revealed in slow dramatic push in"
-  },
-  {
-    name: "Dolly Zoom",
-    imageStyle: "vertigo dolly zoom perspective, background stretching effect, unsettling depth",
-    motionStyle: "dolly zoom effect, subject stays same size while background dramatically changes"
-  },
-  {
-    name: "POV First Person",
-    imageStyle: "first person POV shot, as if viewer is walking through the scene, immersive",
-    motionStyle: "first person POV camera movement, walking forward into the scene"
-  },
-  {
-    name: "Security Camera",
-    imageStyle: "security camera angle, wide static shot, surveillance footage look, slightly grainy",
-    motionStyle: "static security camera, no movement, slight grain, surveillance style"
-  },
-  {
-    name: "News Broadcast",
-    imageStyle: "news broadcast camera style, professional journalism angle, slightly zoomed",
-    motionStyle: "news camera slow zoom in, professional broadcast movement"
-  },
-  {
-    name: "Time Lapse",
-    imageStyle: "time lapse photography style, motion blur on moving elements, static background",
-    motionStyle: "time lapse movement, fast flowing environment with static camera"
-  },
-  {
-    name: "Crane Shot",
-    imageStyle: "crane shot perspective, camera slowly rising from ground level upward",
-    motionStyle: "crane camera slowly rising from low to high, revealing the full scene"
-  },
-  {
-    name: "Tracking Shot",
-    imageStyle: "tracking shot, camera moves alongside subject, motion blur on background",
-    motionStyle: "tracking shot, camera follows subject movement from the side"
-  },
-  {
-    name: "Extreme Close Up",
-    imageStyle: "extreme macro close up, small details fill the entire frame, shallow depth of field",
-    motionStyle: "extreme close up slow zoom in, revealing tiny details dramatically"
-  },
-  {
-    name: "Dutch Angle",
-    imageStyle: "dutch angle tilt shot, camera rotated 20 degrees, unsettling dramatic framing",
-    motionStyle: "dutch angle tilt, camera slowly rotates to reveal the scene at an angle"
-  },
-  {
-    name: "Shoulder Mount",
-    imageStyle: "shoulder mounted camera style, slight bounce and sway, journalistic feel",
-    motionStyle: "shoulder mount camera, realistic bounce movement as if walking with camera"
-  },
-  {
-    name: "360 Orbit",
-    imageStyle: "360 orbit perspective, camera circling the subject, dynamic angle",
-    motionStyle: "slow 360 degree orbit around the main subject, circular camera movement"
-  },
-  {
-    name: "Rack Focus",
-    imageStyle: "rack focus shot, foreground sharp while background beautifully blurred, bokeh",
-    motionStyle: "pull focus from background to foreground, dramatic blur transition"
-  },
-  {
-    name: "Top Down",
-    imageStyle: "overhead top down shot, looking straight down at the scene from above",
-    motionStyle: "overhead top down camera, slowly pulling back to reveal more of the scene"
-  },
-  {
-    name: "Low Angle",
-    imageStyle: "low angle ground level shot, looking dramatically upward, powerful perspective",
-    motionStyle: "low angle camera tilting up slowly, dramatic upward reveal"
-  },
-  {
-    name: "Whip Pan",
-    imageStyle: "whip pan transition style, motion blur across the frame, dynamic energy",
-    motionStyle: "fast whip pan movement, camera sweeps quickly across the scene"
-  },
-  {
-    name: "Underwater",
-    imageStyle: "underwater camera shot, light rays filtering through water, dreamy distortion",
-    motionStyle: "underwater camera slowly rising toward the surface, light rays above"
-  },
-  {
-    name: "Steadicam",
-    imageStyle: "steadicam glide shot, perfectly smooth movement, cinematic float",
-    motionStyle: "steadicam smooth glide forward, perfectly stable cinematic movement"
-  }
+  { name: "Handheld", imageStyle: "handheld camera shot, slight tilt, raw documentary feel", motionStyle: "handheld shaky cam, slight organic movement, documentary style" },
+  { name: "Drone Aerial", imageStyle: "aerial drone shot, bird's eye view from high above, sweeping", motionStyle: "slow drone pullback reveal from above" },
+  { name: "Slow Motion", imageStyle: "cinematic slow motion frame, dramatic motion blur at edges", motionStyle: "ultra slow motion push in, 240fps look, every detail revealed" },
+  { name: "Dolly Zoom", imageStyle: "vertigo dolly zoom, background stretching effect, unsettling depth", motionStyle: "dolly zoom effect, subject stays same size while background changes" },
+  { name: "POV", imageStyle: "first person POV shot, as if viewer walks through scene, immersive", motionStyle: "first person POV camera moving forward into the scene" },
+  { name: "Security Cam", imageStyle: "security camera wide angle, static surveillance look, slightly grainy", motionStyle: "static security camera, no movement, slight grain" },
+  { name: "News Broadcast", imageStyle: "news broadcast camera, professional journalism angle, slightly zoomed", motionStyle: "news camera slow zoom in, professional broadcast movement" },
+  { name: "Time Lapse", imageStyle: "time lapse photography, motion blur on moving elements, static background", motionStyle: "time lapse movement, fast flowing environment, static camera" },
+  { name: "Crane Shot", imageStyle: "crane shot perspective, camera rising from ground level upward", motionStyle: "crane slowly rising from low to high revealing full scene" },
+  { name: "Tracking Shot", imageStyle: "tracking shot, camera moves alongside subject, motion blur background", motionStyle: "tracking shot camera follows subject from the side" },
+  { name: "Extreme Close Up", imageStyle: "extreme macro close up, small details fill entire frame, shallow depth", motionStyle: "extreme close up slow zoom revealing tiny details" },
+  { name: "Dutch Angle", imageStyle: "dutch angle tilt shot, camera rotated 20 degrees, dramatic unsettling", motionStyle: "dutch angle tilt camera slowly rotating" },
+  { name: "Shoulder Mount", imageStyle: "shoulder mounted camera, slight bounce and sway, journalistic feel", motionStyle: "shoulder mount bounce movement, realistic walking pace" },
+  { name: "360 Orbit", imageStyle: "360 orbit perspective, camera circling subject, dynamic angle", motionStyle: "slow 360 degree orbit around main subject" },
+  { name: "Rack Focus", imageStyle: "rack focus shot, foreground sharp, background beautifully blurred, bokeh", motionStyle: "pull focus from background to foreground, dramatic blur transition" },
+  { name: "Top Down", imageStyle: "overhead top down shot, looking straight down at scene from above", motionStyle: "overhead top down slowly pulling back to reveal more" },
+  { name: "Low Angle", imageStyle: "low angle ground level shot, looking dramatically upward, powerful", motionStyle: "low angle tilt up slowly, dramatic upward reveal" },
+  { name: "Whip Pan", imageStyle: "whip pan transition style, motion blur across frame, dynamic energy", motionStyle: "fast whip pan sweep across the scene" },
+  { name: "Underwater", imageStyle: "underwater camera, light rays through water, dreamy distortion", motionStyle: "underwater camera slowly rising toward surface, light above" },
+  { name: "Steadicam", imageStyle: "steadicam glide shot, perfectly smooth cinematic float", motionStyle: "steadicam smooth glide forward, perfectly stable cinematic" }
 ]
 
-function getCameraTechnique(sceneIndex) {
-  return CAMERA_TECHNIQUES[sceneIndex % CAMERA_TECHNIQUES.length]
-}
+const getCam = i => CAMERA_TECHNIQUES[i % CAMERA_TECHNIQUES.length]
 
-
-// ─────────────────────────────────────────
-// PEOPLE PATTERN: 3 with, 1 without, 3 with, 2 without — repeat
-// Cycle: [T, T, T, F, T, T, T, F, F] = 9 per cycle
-// ─────────────────────────────────────────
+// People pattern: 3 with people → 1 without → 3 with → 2 without (repeat)
 const PEOPLE_CYCLE = [true, true, true, false, true, true, true, false, false]
+const hasPeople = i => PEOPLE_CYCLE[i % PEOPLE_CYCLE.length]
 
-function shouldHavePeople(sceneIndex) {
-  return PEOPLE_CYCLE[sceneIndex % PEOPLE_CYCLE.length]
+// Reporter scenes: every 4th (scene 4, 8, 12... = index 3, 7, 11...)
+const isReporter = i => (i + 1) % REPORTER_EVERY === 0
+
+// Title card scenes: every 8th (won't fire at 6 scenes, but ready)
+const isTitleCard = i => (i + 1) % TITLE_CARD_EVERY === 0
+
+
+// ─────────────────────────────────────────
+// GOOGLE DRIVE DOWNLOAD
+// ─────────────────────────────────────────
+async function downloadFromDrive(fileId, outPath) {
+  const url = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Drive download failed: ${res.status} (ID: ${fileId})`)
+  const buf = await res.buffer()
+  fs.writeFileSync(outPath, buf)
+  console.log(`Drive download: ${outPath} (${(buf.length / 1024).toFixed(0)}KB)`)
+  return outPath
 }
 
 
 // ─────────────────────────────────────────
 // REPLICATE POLLING
 // ─────────────────────────────────────────
-async function pollReplicate(predictionId, label) {
-  const maxWait = 10 * 60 * 1000
+async function pollReplicate(id, label) {
   const start = Date.now()
-
   while (true) {
-    if (Date.now() - start > maxWait) throw new Error(`${label} timed out after 10 minutes`)
+    if (Date.now() - start > 10 * 60 * 1000) throw new Error(`${label} timed out`)
     await sleep(6000)
-    const res = await fetch(
-      `https://api.replicate.com/v1/predictions/${predictionId}`,
-      { headers: { Authorization: `Bearer ${REPLICATE_TOKEN}` } }
-    )
-    const result = await res.json()
-    console.log(`${label} status: ${result.status}`)
-    if (result.status === "succeeded") return result
-    if (result.status === "failed") throw new Error(`${label} failed: ${result.error}`)
+    const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
+      headers: { Authorization: `Bearer ${REPLICATE_TOKEN}` }
+    })
+    const r = await res.json()
+    console.log(`${label}: ${r.status}`)
+    if (r.status === "succeeded") return r
+    if (r.status === "failed") throw new Error(`${label} failed: ${r.error}`)
   }
 }
 
 
 // ─────────────────────────────────────────
-// STEP 1 — SCRIPT GENERATION
-// YouTube hook structure:
-// - Opens with the most dramatic statement possible
-// - Creates urgency and curiosity immediately
-// - Ends with Thanks for watching
+// STEP 1 — SCRIPT (YouTube hook structure)
 // ─────────────────────────────────────────
 async function generateScript(input) {
-  console.log("Generating script...")
   let context = input
-
   if (input.startsWith("http://") || input.startsWith("https://")) {
     try {
       const res = await fetch(input, { headers: { "User-Agent": "Mozilla/5.0" } })
       const html = await res.text()
-      const text = html
+      context = "Article: " + html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
         .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 4000)
-      context = `Article content:\n${text}`
-      console.log("Article fetched.")
-    } catch (err) {
-      context = `Topic: ${input}`
-    }
+        .replace(/\s+/g, " ").trim().slice(0, 4000)
+    } catch { context = `Topic: ${input}` }
   }
 
-  const completion = await openai.chat.completions.create({
+  const r = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: `You are an expert YouTube scriptwriter who specializes in viral short-form content.
+        content: `You write viral YouTube voiceover scripts for 30-second videos (6 scenes × 5 seconds).
 
-Your job is to write a 10-second voiceover script that hooks viewers in the first second.
-
-YouTube hook science:
-- Start with the most shocking or unexpected fact
-- Use power words: secret, hidden, never seen, shocking, untold, discovered
-- Create a knowledge gap — make the viewer feel they NEED to know more
-- Short punchy sentences hit harder than long ones
-- The first 3 words must be magnetic
+Structure:
+- [SCENE 1-2]: DRAMATIC HOOK — most shocking fact or revelation, creates urgency, max 15 words each
+- [SCENE 3-4]: REVELATION — the key story or discovery, max 15 words each
+- [SCENE 5-6]: IMPACT — why this matters, strong finish, last scene ends with: Thanks for watching
 
 Rules:
-- Maximum 35 words
-- 2 sentences only
-- Must feel urgent and dramatic
-- Must end with exactly: Thanks for watching
-- No emojis, no hashtags
-- Write ONLY the script, nothing else`
+- Label each: [SCENE 1] text [SCENE 2] text etc.
+- 12-16 words per scene
+- Start with the most shocking statement
+- Use real names, dates, numbers when available
+- Power words: secret, hidden, never seen, shocking, discovered, revealed, untold
+- Write ONLY the labeled scenes, nothing else`
       },
-      {
-        role: "user",
-        content: `Write a 10-second YouTube hook script about:\n\n${context}`
-      }
+      { role: "user", content: `Write 6-scene 30-second script about:\n\n${context}` }
     ],
-    max_tokens: 120,
+    max_tokens: 350,
     temperature: 0.8
   })
-
-  const script = completion.choices[0].message.content.trim()
-  console.log("Script:", script)
-  return script
+  return r.choices[0].message.content.trim()
 }
 
 
 // ─────────────────────────────────────────
-// STEP 2 — SCENE BREAKDOWN
-// Scene 1 = most dramatic hook visual
-// Scene 2 = continuation / revelation
-// Each gets camera technique + people decision baked in
+// STEP 2 — VISUAL STYLE DIRECTIVE
+// Ensures all scenes share the same palette, mood, and cinematic feel
 // ─────────────────────────────────────────
-async function splitScenes(script, totalScenes) {
-  console.log("Splitting into scenes...")
-
-  // Pre-assign camera technique and people for each scene
-  const sceneSetup = Array.from({ length: totalScenes }, (_, i) => ({
-    index: i,
-    camera: getCameraTechnique(i),
-    hasPeople: shouldHavePeople(i)
-  }))
-
-  const setupDescription = sceneSetup.map((s, i) =>
-    `Scene ${i + 1}: camera=${s.camera.name}, people=${s.hasPeople ? "YES include 1-3 people relevant to the scene" : "NO people at all"}`
-  ).join("\n")
-
-  const completion = await openai.chat.completions.create({
+async function generateVisualStyle(topic, script) {
+  const r = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: `You split a YouTube script into scenes for a short video.
-Each scene needs a photorealistic image prompt and a video motion prompt.
+        content: `Define a cinematic visual style for a YouTube video. Applied to ALL scenes for consistency.
+Return ONLY valid JSON. No markdown. No backticks.
+{
+  "colorPalette": "specific colors e.g. warm amber, deep shadow, terracotta",
+  "lighting": "specific lighting e.g. dramatic low-key side lighting, golden hour",
+  "atmosphere": "e.g. dusty and hazy, cold and desolate, dark and humid",
+  "mood": "e.g. tense and mysterious, epic and grand, eerie and unsettling",
+  "styleTag": "e.g. cinematic historical documentary, dark sci-fi thriller",
+  "consistencyTag": "a short phrase appended to every image prompt for visual consistency",
+  "avoid": "what to avoid in all images"
+}`
+      },
+      { role: "user", content: `Video about: ${topic}\nScript: ${script}` }
+    ],
+    max_tokens: 300,
+    temperature: 0.7
+  })
+  return JSON.parse(r.choices[0].message.content.trim())
+}
+
+
+// ─────────────────────────────────────────
+// STEP 3 — SCENE BREAKDOWN
+// Parses script into scenes, assigns camera, people, reporter, title card
+// ─────────────────────────────────────────
+async function buildScenes(rawScript, totalScenes, style, topic) {
+  // Parse labeled scenes
+  const matches = rawScript.match(/\[SCENE \d+\][^\[]+/g) || []
+  const texts = matches.map(s => s.replace(/\[SCENE \d+\]/, "").trim())
+
+  const setup = Array.from({ length: totalScenes }, (_, i) => ({
+    index: i,
+    camera: getCam(i),
+    hasPeople: hasPeople(i),
+    isReporter: isReporter(i),
+    isTitleCard: isTitleCard(i),
+    script: texts[i] || `Scene ${i + 1} about ${topic}`
+  }))
+
+  const setupList = setup.map((s, i) =>
+    `Scene ${i + 1}: "${s.script}" | Cam: ${s.camera.name} | People: ${s.hasPeople ? "YES 1-3 people" : "NO people"} | Reporter: ${s.isReporter ? "YES man talking to camera in foreground" : "no"}`
+  ).join("\n")
+
+  const r = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content: `Generate image and motion prompts for each scene of a YouTube video.
+
+Apply this EXACT visual style to ALL scenes (critical for consistency):
+Color palette: ${style.colorPalette}
+Lighting: ${style.lighting}  
+Atmosphere: ${style.atmosphere}
+Mood: ${style.mood}
+Style: ${style.styleTag}
+Consistency tag (add to every prompt): ${style.consistencyTag}
+Avoid in all images: ${style.avoid}
 
 Image prompt rules:
-- Always photorealistic, real photography, no CGI, no illustration, no 3D
-- Apply the assigned camera technique style to the composition
-- If people are assigned: include 1-3 people that make sense for the scene
-- If no people: pure environment, landscape, objects, no human presence
-- High detail, cinematic, dramatic lighting
-- No text, no watermarks, no logos
+- PHOTOREALISTIC photography ONLY — real photo, shot on camera, no CGI, no illustration, no 3D
+- Apply camera technique to the composition style
+- Apply visual style consistently
+- Include people only if specified
+- Reporter scenes: leave clear foreground space where a man talking to camera will be composited
+- No text, no watermarks, no logos in image
+- 4K cinematic quality
 
-Motion prompt rules:
-- Describe exactly how the camera moves during the video clip
-- Use the assigned camera technique name and style
-- Be specific: speed, direction, what is revealed
-
-Return ONLY valid JSON. No markdown. No backticks.
-Format:
+Return ONLY valid JSON:
 {
   "scenes": [
     {
-      "script": "the script text for this scene",
-      "imagePrompt": "detailed photorealistic image prompt with camera style and people decision applied",
-      "motionPrompt": "specific camera motion for Kling video generation"
+      "imagePrompt": "...",
+      "motionPrompt": "...",
+      "titleCardText": "key word or phrase if title card scene, otherwise null"
     }
   ]
 }`
       },
-      {
-        role: "user",
-        content: `Split this script into ${totalScenes} scenes:\n\n"${script}"\n\nScene assignments:\n${setupDescription}`
-      }
+      { role: "user", content: `Prompts for ${totalScenes} scenes:\n${setupList}` }
     ],
-    max_tokens: 800,
+    max_tokens: 1500,
     temperature: 0.7
   })
 
-  const raw = completion.choices[0].message.content.trim()
-  const data = JSON.parse(raw)
-
-  return data.scenes.map((s, i) => ({
-    script: s.script,
-    imagePrompt: s.imagePrompt,
-    motion: s.motionPrompt,
-    camera: sceneSetup[i].camera.name,
-    hasPeople: sceneSetup[i].hasPeople
+  const data = JSON.parse(r.choices[0].message.content.trim())
+  return setup.map((s, i) => ({
+    ...s,
+    imagePrompt: data.scenes[i]?.imagePrompt || `${s.script}, ${style.styleTag}, photorealistic`,
+    motion: data.scenes[i]?.motionPrompt || s.camera.motionStyle,
+    titleCardText: data.scenes[i]?.titleCardText || null
   }))
 }
 
 
 // ─────────────────────────────────────────
-// STEP 3 — IMAGE GENERATION
-// Flux 2 Max — photorealistic only
+// STEP 4 — IMAGE GENERATION (Flux 2 Max)
 // ─────────────────────────────────────────
-async function generateImage(prompt, index) {
-  console.log(`Starting image ${index + 1}...`)
+async function generateImage(prompt, avoid, index) {
+  const full = `${prompt}, photorealistic photography, real photo, ultra detailed, shot on camera, no CGI, no illustration, no 3D, no text, no watermark. Avoid: ${avoid}`
 
-  // Enforce photorealistic style in the prompt
-  const fullPrompt = `${prompt}, photorealistic photography, real photo, shot on camera, ultra detailed, no CGI, no illustration, no 3D render, no painting`
+  const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ input: { prompt: full, width: 1280, height: 720, output_format: "jpg", output_quality: 95 } })
+  })
+  const pred = await res.json()
+  if (!pred.id) throw new Error(`Image ${index + 1} could not start. Check REPLICATE_API_TOKEN.`)
 
-  const res = await fetch(
-    "https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input: {
-          prompt: fullPrompt,
-          width: 1280,
-          height: 720,
-          output_format: "jpg",
-          output_quality: 95
-        }
-      })
-    }
-  )
-
-  const prediction = await res.json()
-  if (!prediction.id) throw new Error(`Image ${index + 1} could not start. Check REPLICATE_API_TOKEN.`)
-
-  const result = await pollReplicate(prediction.id, `Image ${index + 1}`)
-  const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
-  const imgRes = await fetch(imageUrl)
-  const buffer = await imgRes.buffer()
-  const filePath = `/tmp/images/img_${index}.jpg`
-  fs.writeFileSync(filePath, buffer)
-  console.log(`Image ${index + 1} done.`)
-  return filePath
+  const result = await pollReplicate(pred.id, `Image ${index + 1}`)
+  const url = Array.isArray(result.output) ? result.output[0] : result.output
+  const buf = await (await fetch(url)).buffer()
+  const path = `/tmp/images/img_${index}.jpg`
+  fs.writeFileSync(path, buf)
+  return path
 }
 
 
 // ─────────────────────────────────────────
-// STEP 4 — VIDEO GENERATION
-// Kling v2.6 — keeps its ambient sound effects
-// Do NOT strip audio — we mix it in at 20% later
+// STEP 4B — REPORTER COMPOSITE
+// Downloads your PNG and composites it on the background scene
+// Alternates position: right → left → right...
 // ─────────────────────────────────────────
-async function generateVideo(imagePath, motionPrompt, index) {
-  console.log(`Starting video ${index + 1}...`)
+let cachedReporterPng = null
 
-  const imageBuffer = fs.readFileSync(imagePath)
-  const base64Image = `data:image/jpeg;base64,${imageBuffer.toString("base64")}`
+async function compositeReporter(bgPath, sceneIndex) {
+  // Download and cache reporter PNG
+  if (!cachedReporterPng) {
+    cachedReporterPng = "/tmp/assets/reporter_scene.png"
+    await downloadFromDrive(REPORTER_SCENE_PNG_ID, cachedReporterPng)
+  }
 
-  const res = await fetch(
-    "https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input: { image: base64Image, prompt: motionPrompt, duration: 5, aspect_ratio: "16:9" }
-      })
-    }
-  )
+  const out = `/tmp/images/img_${sceneIndex}_reporter.jpg`
+  const W = 1280, H = 720
 
-  const prediction = await res.json()
-  if (!prediction.id) throw new Error(`Video ${index + 1} could not start. Check REPLICATE_API_TOKEN.`)
+  // Scale reporter to 68% of frame height
+  const personH = Math.round(H * 0.68)
+  const personBuf = await sharp(cachedReporterPng)
+    .resize({ height: personH, fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .toBuffer()
 
-  const result = await pollReplicate(prediction.id, `Video ${index + 1}`)
-  const videoUrl = Array.isArray(result.output) ? result.output[0] : result.output
-  const vidRes = await fetch(videoUrl)
-  const buffer = await vidRes.buffer()
-  const filePath = `/tmp/videos/video_${index}.mp4`
-  fs.writeFileSync(filePath, buffer)
-  console.log(`Video ${index + 1} done. Size: ${(buffer.length / 1024 / 1024).toFixed(1)}MB`)
-  return filePath
+  const meta = await sharp(personBuf).metadata()
+  const personW = meta.width || 440
+
+  // Alternate: even reporter = right side, odd = left side
+  const isRight = reporterSceneCount % 2 === 0
+  const xPos = isRight
+    ? Math.round(W * 0.58 - personW / 2)
+    : Math.round(W * 0.32 - personW / 2)
+  const yPos = H - personH
+
+  await sharp(bgPath)
+    .resize(W, H)
+    .composite([{
+      input: personBuf,
+      left: Math.max(0, Math.min(xPos, W - personW)),
+      top: Math.max(0, yPos),
+      blend: "over"
+    }])
+    .jpeg({ quality: 95 })
+    .toFile(out)
+
+  reporterSceneCount++
+  console.log(`Reporter composited on scene ${sceneIndex + 1} (${isRight ? "right" : "left"})`)
+  return out
 }
 
 
 // ─────────────────────────────────────────
-// STEP 5 — VOICE GENERATION
-// ElevenLabs Ellis voice
+// STEP 5 — VIDEO (Kling v2.6)
+// Reporter scenes use gentle handheld motion
+// Keeps Kling ambient audio for SFX mixing
+// ─────────────────────────────────────────
+async function generateVideo(imgPath, motionPrompt, reporter, index) {
+  const motion = reporter
+    ? "gentle handheld camera slight natural movement, person talking to camera close up, slight realistic hand shake, not too shaky"
+    : motionPrompt
+
+  const imgBuf = fs.readFileSync(imgPath)
+  const b64 = `data:image/jpeg;base64,${imgBuf.toString("base64")}`
+
+  const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ input: { image: b64, prompt: motion, duration: 5, aspect_ratio: "16:9" } })
+  })
+  const pred = await res.json()
+  if (!pred.id) throw new Error(`Video ${index + 1} could not start.`)
+
+  const result = await pollReplicate(pred.id, `Video ${index + 1}`)
+  const url = Array.isArray(result.output) ? result.output[0] : result.output
+  const buf = await (await fetch(url)).buffer()
+  const path = `/tmp/videos/video_${index}.mp4`
+  fs.writeFileSync(path, buf)
+  console.log(`Video ${index + 1}: ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+  return path
+}
+
+
+// ─────────────────────────────────────────
+// STEP 6 — VOICE (ElevenLabs Ellis)
 // ─────────────────────────────────────────
 async function generateVoice(text, index) {
-  console.log(`Generating voice ${index + 1}...`)
-
-  const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${ELLIS_VOICE_ID}`,
-    {
-      method: "POST",
-      headers: {
-        "xi-api-key": process.env.ELEVENLABS_API_KEY,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        text,
-        model_id: "eleven_monolingual_v1",
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
-      })
-    }
-  )
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`ElevenLabs failed (${res.status}): ${errText}`)
-  }
-
-  const buffer = await res.buffer()
-  const filePath = `/tmp/voices/voice_${index}.mp3`
-  fs.writeFileSync(filePath, buffer)
-  console.log(`Voice ${index + 1} done.`)
-  return filePath
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELLIS_VOICE_ID}`, {
+    method: "POST",
+    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ text, model_id: "eleven_monolingual_v1", voice_settings: { stability: 0.5, similarity_boost: 0.75 } })
+  })
+  if (!res.ok) throw new Error(`ElevenLabs failed: ${res.status}`)
+  const buf = await res.buffer()
+  const path = `/tmp/voices/voice_${index}.mp3`
+  fs.writeFileSync(path, buf)
+  return path
 }
 
 
 // ─────────────────────────────────────────
-// STEP 6 — BACKGROUND MUSIC
+// STEP 7 — WHISPER CAPTIONS
+// Transcribes each voice file and builds SRT with correct time offsets
+// ─────────────────────────────────────────
+async function transcribeVoice(audioPath) {
+  const r = await openai.audio.transcriptions.create({
+    file: fs.createReadStream(audioPath),
+    model: "whisper-1",
+    response_format: "verbose_json",
+    timestamp_granularities: ["segment"]
+  })
+  return r.segments || []
+}
+
+function buildSRT(segments) {
+  const t = s => {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
+    const sec = Math.floor(s % 60), ms = Math.round((s % 1) * 1000)
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")},${String(ms).padStart(3, "0")}`
+  }
+  return segments.map((seg, i) =>
+    `${i + 1}\n${t(seg.start)} --> ${t(seg.end)}\n${seg.text.trim()}\n`
+  ).join("\n")
+}
+
+
+// ─────────────────────────────────────────
+// STEP 8 — MUSIC
 // ─────────────────────────────────────────
 async function downloadMusic() {
-  console.log("Downloading music...")
   const driveUrl = process.env.MUSIC_DRIVE_URL
-  const match =
-    driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
-    driveUrl.match(/id=([a-zA-Z0-9_-]+)/)
-
-  if (!match) throw new Error("MUSIC_DRIVE_URL is not a valid Google Drive link.")
-
-  const fileId = match[1]
-  const url = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Music download failed: HTTP ${res.status}`)
-
-  const buffer = await res.buffer()
-  const rawPath = `/tmp/music_raw.mp3`
-  fs.writeFileSync(rawPath, buffer)
-  console.log(`Music downloaded. Size: ${(buffer.length / 1024 / 1024).toFixed(1)}MB`)
-  return rawPath
+  const match = driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || driveUrl.match(/id=([a-zA-Z0-9_-]+)/)
+  if (!match) throw new Error("MUSIC_DRIVE_URL invalid.")
+  const res = await fetch(`https://drive.google.com/uc?export=download&id=${match[1]}&confirm=t`)
+  if (!res.ok) throw new Error(`Music download failed: ${res.status}`)
+  const buf = await res.buffer()
+  const path = "/tmp/music_raw.mp3"
+  fs.writeFileSync(path, buf)
+  console.log(`Music: ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+  return path
 }
 
 
 // ─────────────────────────────────────────
-// FFMPEG HELPERS
+// FFMPEG PIPELINE
 // ─────────────────────────────────────────
-function getDuration(filePath) {
-  return parseFloat(
-    execSync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
-    ).toString().trim()
-  )
+function getDuration(p) {
+  return parseFloat(execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`).toString().trim())
 }
 
-function hasAudioStream(filePath) {
+function hasAudio(p) {
   try {
-    const result = execSync(
-      `ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
-    ).toString().trim()
-    return result === "audio"
-  } catch {
-    return false
-  }
+    return execSync(`ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "${p}"`).toString().trim() === "audio"
+  } catch { return false }
 }
 
-// Trim video to match voice duration exactly
-function trimVideo(videoPath, duration, index) {
-  const out = `/tmp/videos/video_trimmed_${index}.mp4`
-  execSync(
-    `ffmpeg -y -i "${videoPath}" -t ${duration} -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 "${out}"`
-  )
+function trimVideo(vidPath, dur, i) {
+  const out = `/tmp/videos/trimmed_${i}.mp4`
+  execSync(`ffmpeg -y -i "${vidPath}" -t ${dur} -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 "${out}"`)
   return out
 }
 
-// Build one scene:
-// Voice = 100%, Kling sound effects = 20%
-// If Kling has no audio, just use voice alone
-function buildScene(videoPath, voicePath, index) {
-  const out = `/tmp/final/scene_${index}.mp4`
-  const videoHasAudio = hasAudioStream(videoPath)
-
-  if (videoHasAudio) {
-    console.log(`Scene ${index + 1}: mixing voice (100%) + Kling SFX (20%)`)
+// Mix: Voice 100% + Kling SFX 20%
+function buildScene(vidPath, voicePath, i) {
+  const out = `/tmp/final/scene_${i}.mp4`
+  if (hasAudio(vidPath)) {
     execSync(
-      `ffmpeg -y -i "${videoPath}" -i "${voicePath}" ` +
+      `ffmpeg -y -i "${vidPath}" -i "${voicePath}" ` +
       `-filter_complex "[0:a]volume=0.20[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" ` +
-      `-map 0:v -map "[aout]" ` +
-      `-c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 ` +
-      `-shortest "${out}"`
+      `-map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
     )
   } else {
-    console.log(`Scene ${index + 1}: Kling has no audio — using voice only`)
-    execSync(
-      `ffmpeg -y -i "${videoPath}" -i "${voicePath}" ` +
-      `-map 0:v -map 1:a ` +
-      `-c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 ` +
-      `-shortest "${out}"`
-    )
+    execSync(`ffmpeg -y -i "${vidPath}" -i "${voicePath}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
   }
-
-  console.log(`Scene ${index + 1} built.`)
   return out
 }
 
-// Concatenate all scenes using filter_complex
-// This is reliable for both video and audio
-function concatScenes(scenePaths) {
-  const out = `/tmp/final/concatenated.mp4`
-  const n = scenePaths.length
-  const inputs = scenePaths.map(p => `-i "${p}"`).join(" ")
-  const streams = scenePaths.map((_, i) => `[${i}:v][${i}:a]`).join("")
-  const filter = `${streams}concat=n=${n}:v=1:a=1[outv][outa]`
-
+// Title card: big white text at center for first 2.5 seconds of scene
+function addTitleCard(vidPath, text, i) {
+  const out = `/tmp/final/scene_title_${i}.mp4`
+  const safe = text.replace(/'/g, "\\'").replace(/:/g, "\\:").toUpperCase()
+  const dur = Math.min(2.5, getDuration(vidPath) * 0.55)
   execSync(
-    `ffmpeg -y ${inputs} ` +
-    `-filter_complex "${filter}" ` +
-    `-map "[outv]" -map "[outa]" ` +
-    `-c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${out}"`
+    `ffmpeg -y -i "${vidPath}" ` +
+    `-vf "drawtext=text='${safe}':fontcolor=white:fontsize=110:x=(w-tw)/2:y=(h-th)/2:` +
+    `borderw=5:bordercolor=black:enable='between(t,0,${dur})'" ` +
+    `-c:v libx264 -preset fast -crf 18 -c:a copy "${out}"`
   )
-  console.log("All scenes concatenated.")
   return out
 }
 
-// Add background music underneath everything
-// Music = 40%, existing audio (voice + SFX) stays as is
-function addMusic(videoPath, musicPath, totalDuration) {
-  const out = `/tmp/final/final_video.mp4`
-
-  // Trim music to video length
-  const musicTrimmed = `/tmp/final/music_trimmed.mp3`
-  execSync(`ffmpeg -y -i "${musicPath}" -t ${totalDuration} -af "volume=0.40" "${musicTrimmed}"`)
-
-  // Mix existing audio (voice + SFX already at their levels) with music at 40%
+function concatScenes(paths) {
+  const out = "/tmp/final/concatenated.mp4"
+  const n = paths.length
+  const inputs = paths.map(p => `-i "${p}"`).join(" ")
+  const streams = paths.map((_, i) => `[${i}:v][${i}:a]`).join("")
   execSync(
-    `ffmpeg -y -i "${videoPath}" -i "${musicTrimmed}" ` +
-    `-filter_complex "[0:a]volume=1.0[existing];[1:a]volume=0.40[music];[existing][music]amix=inputs=2:duration=first:dropout_transition=0[aout]" ` +
-    `-map 0:v -map "[aout]" ` +
-    `-c:v libx264 -preset slow -crf 18 -b:v 8M -maxrate 10M -bufsize 20M ` +
-    `-c:a aac -b:a 192k -ar 44100 -ac 2 ` +
-    `-movflags +faststart "${out}"`
+    `ffmpeg -y ${inputs} -filter_complex "${streams}concat=n=${n}:v=1:a=1[outv][outa]" ` +
+    `-map "[outv]" -map "[outa]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${out}"`
   )
-
-  const size = fs.statSync(out).size
-  console.log(`Final video ready. Size: ${(size / 1024 / 1024).toFixed(1)}MB`)
   return out
+}
+
+// Add music at 40% under voice+SFX, export HD for YouTube
+function addMusicHD(vidPath, musicPath, dur) {
+  const musicTrim = "/tmp/final/music_trim.mp3"
+  execSync(`ffmpeg -y -i "${musicPath}" -t ${dur} -af "volume=0.40" "${musicTrim}"`)
+  const out = "/tmp/final/with_music.mp4"
+  execSync(
+    `ffmpeg -y -i "${vidPath}" -i "${musicTrim}" ` +
+    `-filter_complex "[0:a]volume=1.0[ex];[1:a]volume=0.40[mu];[ex][mu]amix=inputs=2:duration=first:dropout_transition=0[aout]" ` +
+    `-map 0:v -map "[aout]" -c:v libx264 -preset slow -crf 18 -b:v 8M -maxrate 10M -bufsize 20M ` +
+    `-c:a aac -b:a 192k -ar 44100 -movflags +faststart "${out}"`
+  )
+  return out
+}
+
+// Burn captions — white text with semi-transparent dark background
+function burnCaptions(vidPath, srtContent) {
+  const srtPath = "/tmp/final/captions.srt"
+  // Escape path for FFmpeg filter
+  const escapedSrt = srtPath.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'")
+  fs.writeFileSync(srtPath, srtContent)
+  const out = "/tmp/final/final_video.mp4"
+  execSync(
+    `ffmpeg -y -i "${vidPath}" ` +
+    `-vf "subtitles='${escapedSrt}':force_style='Fontname=Sans,Fontsize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=2,MarginV=35'" ` +
+    `-c:v libx264 -preset slow -crf 18 -b:v 8M -c:a copy -movflags +faststart "${out}"`
+  )
+  return out
+}
+
+
+// ─────────────────────────────────────────
+// THUMBNAIL GENERATOR
+// Flux background + your PNG cutout + purple box + impact text
+// Matches your example design exactly
+// ─────────────────────────────────────────
+async function generateThumbnail(topic, script) {
+  // 1. Generate wide dramatic background
+  const bgRes = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: {
+        prompt: `Dramatic cinematic wide scene about ${topic}, atmospheric, photorealistic, 4K, epic scale, no people, no text, no watermark`,
+        width: 1280, height: 720, output_format: "jpg", output_quality: 95
+      }
+    })
+  })
+  const bgPred = await bgRes.json()
+  if (!bgPred.id) throw new Error("Thumbnail background failed to start")
+  const bgResult = await pollReplicate(bgPred.id, "Thumbnail BG")
+  const bgUrl = Array.isArray(bgResult.output) ? bgResult.output[0] : bgResult.output
+  const bgBuf = await (await fetch(bgUrl)).buffer()
+  const bgPath = "/tmp/assets/thumb_bg.jpg"
+  fs.writeFileSync(bgPath, bgBuf)
+
+  // 2. Generate 4-word impact phrase
+  const phraseRes = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: "Write a YouTube thumbnail impact phrase. MAXIMUM 4 WORDS. All caps. Shocking and curiosity-triggering. Return ONLY the phrase, nothing else. No quotes." },
+      { role: "user", content: `Topic: ${topic}\nScript: ${script}` }
+    ],
+    max_tokens: 15
+  })
+  const phrase = phraseRes.choices[0].message.content.trim().toUpperCase().slice(0, 30)
+  console.log(`Thumbnail phrase: ${phrase}`)
+
+  // 3. Download thumbnail PNG (your cutout with white outline)
+  const personPath = "/tmp/assets/thumb_person.png"
+  await downloadFromDrive(THUMBNAIL_PNG_ID, personPath)
+
+  // 4. Composite: background + person + purple box + text using Sharp SVG
+  const W = 1280, H = 720
+
+  // Scale person to 80% of frame height
+  const personH = Math.round(H * 0.80)
+  const personBuf = await sharp(personPath)
+    .resize({ height: personH, fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .toBuffer()
+  const pMeta = await sharp(personBuf).metadata()
+  const personW = pMeta.width || 520
+
+  // Center person horizontally
+  const personX = Math.round((W - personW) / 2)
+  const personY = H - personH
+
+  // Purple box — 76% of width, centered, in lower third
+  const boxW = Math.round(W * 0.76)
+  const boxH = 100
+  const boxX = Math.round((W - boxW) / 2)
+  const boxY = Math.round(H * 0.72)
+
+  // Dynamic font size based on phrase length
+  const baseFontSize = 58
+  const fontSize = Math.max(32, Math.min(baseFontSize, Math.round(baseFontSize * (12 / Math.max(phrase.length, 12)))))
+
+  // SVG overlay: purple box + decorative right edge + text
+  const svgOverlay = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="6" ry="6" fill="#9B19F5"/>
+    <rect x="${boxX + boxW - 20}" y="${boxY}" width="20" height="${boxH}" rx="6" ry="6" fill="#6600AA"/>
+    <text 
+      x="${boxX + (boxW - 20) / 2 + boxX * 0}" 
+      y="${boxY + boxH / 2 + fontSize * 0.36}" 
+      font-family="Arial Black, Arial, sans-serif" 
+      font-size="${fontSize}" 
+      font-weight="900"
+      fill="#0D0D3D" 
+      text-anchor="middle"
+      dominant-baseline="auto">${phrase}</text>
+  </svg>`
+
+  const thumbPath = "/tmp/assets/thumbnail.jpg"
+  await sharp(bgPath)
+    .resize(W, H)
+    .composite([
+      { input: personBuf, left: Math.max(0, personX), top: Math.max(0, personY), blend: "over" },
+      { input: Buffer.from(svgOverlay), left: 0, top: 0, blend: "over" }
+    ])
+    .jpeg({ quality: 95 })
+    .toFile(thumbPath)
+
+  console.log("Thumbnail done.")
+  return thumbPath
 }
 
 
 // ─────────────────────────────────────────
 // TRIGGER
 // ─────────────────────────────────────────
-bot.onText(/^do it$/i, (msg) => {
-  const chatId = msg.chat.id
-  userState[chatId] = { step: "waiting_input" }
-  bot.sendMessage(chatId, "Send me a theme, article link, or paste any text about your topic.")
+bot.onText(/^do it$/i, msg => {
+  userState[msg.chat.id] = { step: "waiting_input" }
+  bot.sendMessage(msg.chat.id, "Send me a theme, article link, or paste any text about your topic.")
 })
 
 
 // ─────────────────────────────────────────
 // MAIN PIPELINE
 // ─────────────────────────────────────────
-bot.on("message", async (msg) => {
+bot.on("message", async msg => {
   const chatId = msg.chat.id
   if (!userState[chatId] || userState[chatId].step !== "waiting_input") return
   if (/^do it$/i.test(msg.text)) return
 
   const input = msg.text
   userState[chatId].step = "processing"
-
-  const TOTAL_SCENES = 2 // 2 scenes = ~10 seconds for testing
+  reporterSceneCount = 0
+  cachedReporterPng = null
 
   try {
 
     // ── SCRIPT ──
-    await bot.sendMessage(chatId, "✍️ Writing YouTube hook script...")
-    const script = await generateScript(input)
-    await bot.sendMessage(chatId, `📄 Script:\n\n${script}`)
+    await bot.sendMessage(chatId, "✍️ Writing 30-second YouTube hook script...")
+    const rawScript = await generateScript(input)
+    const topic = input.length > 100 ? input.slice(0, 80) + "..." : input
+    await bot.sendMessage(chatId, `📄 Script:\n\n${rawScript}`)
 
-    // ── SCENES ──
-    await bot.sendMessage(chatId, "🎬 Building scenes with camera techniques...")
-    const scenes = await splitScenes(script, TOTAL_SCENES)
+    // ── VISUAL STYLE ──
+    await bot.sendMessage(chatId, "🎨 Defining visual style for all scenes...")
+    const style = await generateVisualStyle(topic, rawScript)
+    await bot.sendMessage(chatId, `🎨 Style: ${style.styleTag}\n🖌 Palette: ${style.colorPalette}\n🎭 Mood: ${style.mood}`)
 
-    let sceneText = ""
+    // ── SCENE PLAN ──
+    await bot.sendMessage(chatId, "🎬 Building 6-scene plan...")
+    const scenes = await buildScenes(rawScript, TOTAL_SCENES, style, topic)
+    let plan = ""
     scenes.forEach((s, i) => {
-      sceneText += `Scene ${i + 1} — 📷 ${s.camera} — 👥 ${s.hasPeople ? "People: YES" : "People: NO"}\n`
-      sceneText += `Script: ${s.script}\n`
-      sceneText += `Image: ${s.imagePrompt}\n`
-      sceneText += `Motion: ${s.motion}\n\n`
+      plan += `Scene ${i + 1}: ${s.camera.name}${s.isReporter ? " 🎙REPORTER" : ""}${s.isTitleCard ? " 📺TITLE" : ""} | ${s.hasPeople ? "👥" : "🏔"}\n`
     })
-    await bot.sendMessage(chatId, sceneText)
+    await bot.sendMessage(chatId, plan)
 
-    // ── IMAGES ──
-    await bot.sendMessage(chatId, "🖼 Generating images with Flux 2 Max... (~1-2 min each)")
-    const imagePaths = []
-    for (let i = 0; i < scenes.length; i++) {
-      await bot.sendMessage(chatId, `⏳ Image ${i + 1} — ${scenes[i].camera} technique...`)
-      const img = await generateImage(scenes[i].imagePrompt, i)
-      imagePaths.push(img)
-      await bot.sendMessage(chatId, `✅ Image ${i + 1} done`)
-    }
+    // ── GENERATE ALL SCENES ──
+    const imagePaths = [], videoPaths = [], voicePaths = []
 
-    // ── VIDEOS ──
-    await bot.sendMessage(chatId, "🎥 Generating videos with Kling v2.6... (~3-5 min each) ⏳")
-    const videoPaths = []
     for (let i = 0; i < scenes.length; i++) {
-      await bot.sendMessage(chatId, `⏳ Video ${i + 1} generating... please wait`)
-      const vid = await generateVideo(imagePaths[i], scenes[i].motion, i)
+      const s = scenes[i]
+      await bot.sendMessage(chatId, `⏳ Scene ${i + 1}/${scenes.length}: Image generating...${s.isReporter ? " (reporter)" : ""}`)
+
+      // Generate background image
+      let imgPath = await generateImage(s.imagePrompt, style.avoid, i)
+
+      // Composite reporter PNG for every 4th scene
+      if (s.isReporter) {
+        try {
+          imgPath = await compositeReporter(imgPath, i)
+          await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Reporter composited`)
+        } catch (e) {
+          console.error("Reporter composite failed:", e.message)
+          await bot.sendMessage(chatId, `⚠️ Scene ${i + 1}: Reporter composite failed, using background only`)
+        }
+      }
+      imagePaths.push(imgPath)
+
+      // Generate video
+      await bot.sendMessage(chatId, `⏳ Scene ${i + 1}/${scenes.length}: Video generating (~3-5 min)...`)
+      const vid = await generateVideo(imgPath, s.motion, s.isReporter, i)
       videoPaths.push(vid)
-      await bot.sendMessage(chatId, `✅ Video ${i + 1} done`)
+
+      // Generate voice
+      const voice = await generateVoice(s.script, i)
+      voicePaths.push(voice)
+      await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Done — image + video + voice`)
     }
 
-    // ── VOICE ──
-    await bot.sendMessage(chatId, "🎙 Generating voice with Ellis...")
-    const voicePaths = []
-    for (let i = 0; i < scenes.length; i++) {
-      const voice = await generateVoice(scenes[i].script, i)
-      voicePaths.push(voice)
-      await bot.sendMessage(chatId, `✅ Voice ${i + 1} done`)
+    // ── WHISPER CAPTIONS ──
+    await bot.sendMessage(chatId, "📝 Transcribing for captions...")
+    const allSegs = []
+    let timeOffset = 0
+    for (let i = 0; i < voicePaths.length; i++) {
+      try {
+        const segs = await transcribeVoice(voicePaths[i])
+        segs.forEach(s => allSegs.push({ text: s.text, start: timeOffset + s.start, end: timeOffset + s.end }))
+      } catch (e) { console.error(`Whisper ${i + 1} failed:`, e.message) }
+      timeOffset += getDuration(voicePaths[i])
     }
+    const srtContent = buildSRT(allSegs)
+    await bot.sendMessage(chatId, `✅ Captions ready (${allSegs.length} segments)`)
 
     // ── TRIM + BUILD SCENES ──
-    await bot.sendMessage(chatId, "✂️ Mixing audio layers and cutting to length...")
+    await bot.sendMessage(chatId, "✂️ Cutting videos and mixing audio layers...")
     const scenePaths = []
     let totalDuration = 0
 
     for (let i = 0; i < scenes.length; i++) {
-      const audioDuration = getDuration(voicePaths[i])
-      totalDuration += audioDuration
-      console.log(`Scene ${i + 1}: voice is ${audioDuration.toFixed(2)}s`)
+      const audioDur = getDuration(voicePaths[i])
+      totalDuration += audioDur
+      const trimmed = trimVideo(videoPaths[i], audioDur, i)
+      let sceneOut = buildScene(trimmed, voicePaths[i], i)
 
-      // Trim video to match voice length
-      const trimmed = trimVideo(videoPaths[i], audioDuration, i)
+      // Title card overlay (every 8th scene — fires at scenes 8, 16, 24...)
+      if (scenes[i].isTitleCard && scenes[i].titleCardText) {
+        sceneOut = addTitleCard(sceneOut, scenes[i].titleCardText, i)
+        await bot.sendMessage(chatId, `📺 Title card: "${scenes[i].titleCardText}"`)
+      }
 
-      // Mix voice (100%) + Kling SFX (20%)
-      const scene = buildScene(trimmed, voicePaths[i], i)
-      scenePaths.push(scene)
-
-      await bot.sendMessage(chatId, `✅ Scene ${i + 1} — ${audioDuration.toFixed(1)}s — Voice + SFX mixed`)
+      scenePaths.push(sceneOut)
+      await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Cut to ${audioDur.toFixed(1)}s — Voice + SFX mixed`)
     }
 
     // ── CONCAT ──
-    await bot.sendMessage(chatId, "🔗 Joining all scenes...")
+    await bot.sendMessage(chatId, "🔗 Joining all 6 scenes...")
     const concatenated = concatScenes(scenePaths)
 
     // ── MUSIC ──
     await bot.sendMessage(chatId, "🎵 Adding background music at 40%...")
     const musicPath = await downloadMusic()
+    const withMusic = addMusicHD(concatenated, musicPath, totalDuration)
 
-    // ── FINAL HD RENDER ──
-    await bot.sendMessage(chatId, `🎬 Rendering final HD video (${totalDuration.toFixed(1)}s)...`)
-    const finalVideo = addMusic(concatenated, musicPath, totalDuration)
+    // ── BURN CAPTIONS ──
+    let finalVideo = withMusic
+    if (allSegs.length > 0) {
+      await bot.sendMessage(chatId, "📝 Burning captions into video...")
+      try {
+        finalVideo = burnCaptions(withMusic, srtContent)
+      } catch (e) {
+        console.error("Caption burn failed:", e.message)
+        await bot.sendMessage(chatId, `⚠️ Captions failed: ${e.message} — video without captions`)
+      }
+    }
+
+    // ── THUMBNAIL ──
+    await bot.sendMessage(chatId, "🖼 Generating thumbnail...")
+    let thumbPath = null
+    try {
+      thumbPath = await generateThumbnail(topic, rawScript)
+    } catch (e) {
+      console.error("Thumbnail failed:", e.message)
+      await bot.sendMessage(chatId, `⚠️ Thumbnail error: ${e.message}`)
+    }
 
     // ── DELIVER ──
     await bot.sendVideo(chatId, finalVideo, {
-      caption: `🎬 Final video ready!\n\nAudio mix:\n🎤 Voice: 100%\n🔊 Scene SFX: 20%\n🎵 Music: 40%`
+      caption: `🎬 30-second video ready!\n🎤 Voice 100% | 🔊 SFX 20% | 🎵 Music 40%\n📝 Captions: ${allSegs.length > 0 ? "✅" : "❌"}`
     })
 
-    await bot.sendMessage(chatId, "✅ Done! Send 'do it' to create another video.")
+    if (thumbPath && fs.existsSync(thumbPath)) {
+      await bot.sendPhoto(chatId, thumbPath, { caption: `🖼 Thumbnail ready!\n💬 "${rawScript.match(/\[SCENE 1\][^\[]+/)?.[0]?.replace("[SCENE 1]", "").trim().slice(0, 50)}..."` })
+    }
 
+    await bot.sendMessage(chatId, "✅ All done! Send 'do it' to create another video.")
     userState[chatId].step = "done"
 
   } catch (err) {
