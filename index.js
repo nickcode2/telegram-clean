@@ -24,13 +24,12 @@ fs.mkdirSync("/tmp/videos", { recursive: true })
 fs.mkdirSync("/tmp/voices", { recursive: true })
 fs.mkdirSync("/tmp/final", { recursive: true })
 
-console.log("Bot is running. Waiting for messages...")
+console.log("Bot is running.")
 
 
 // ─────────────────────────────────────────
-// GOOGLE DRIVE SETUP
-// Reads your service account credentials from Railway
-// and uploads files to a shared folder
+// GOOGLE DRIVE
+// Uploads any file to your shared VideoBot folder
 // ─────────────────────────────────────────
 function getDriveClient() {
   const credentials = JSON.parse(process.env.GDRIVE_CREDENTIALS)
@@ -41,50 +40,57 @@ function getDriveClient() {
   return google.drive({ version: "v3", auth })
 }
 
-async function uploadToDrive(filePath, fileName, mimeType, folderId) {
+async function createSessionFolder(sessionName) {
   const drive = getDriveClient()
-  const fileMetadata = {
-    name: fileName,
-    parents: folderId ? [folderId] : []
-  }
-  const media = {
-    mimeType,
-    body: fs.createReadStream(filePath)
-  }
+  const parentId = process.env.DRIVE_FOLDER_ID // Your VideoBot folder
+
   const res = await drive.files.create({
-    requestBody: fileMetadata,
-    media,
+    requestBody: {
+      name: sessionName,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId]
+    },
     fields: "id, webViewLink"
   })
-  console.log(`Uploaded to Drive: ${fileName} → ${res.data.webViewLink}`)
+
+  console.log(`Session folder created: ${sessionName}`)
   return res.data
 }
 
-async function createDriveFolder(name) {
-  const drive = getDriveClient()
-  const res = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: "application/vnd.google-apps.folder"
-    },
-    fields: "id"
-  })
-  return res.data.id
+async function uploadToDrive(filePath, fileName, mimeType, folderId) {
+  try {
+    const drive = getDriveClient()
+    const res = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [folderId]
+      },
+      media: {
+        mimeType,
+        body: fs.createReadStream(filePath)
+      },
+      fields: "id, webViewLink"
+    })
+    console.log(`✅ Saved to Drive: ${fileName}`)
+    return res.data
+  } catch (err) {
+    console.error(`❌ Drive upload failed for ${fileName}:`, err.message)
+    return null
+  }
 }
 
 
 // ─────────────────────────────────────────
-// STEP 1 — SCRIPT GENERATION WITH OPENAI
-// If input is a URL: fetches and reads the article
-// If input is text or theme: writes from it directly
-// Always produces a clean 10-second script
+// STEP 1 — SCRIPT GENERATION
+// Reads URL articles or plain text/themes
+// Uses OpenAI to write a proper 10-second script
 // ─────────────────────────────────────────
 async function generateScript(input) {
   console.log("Generating script with OpenAI...")
 
   let context = input
 
-  // If it looks like a URL, try to fetch the article text
+  // If it's a URL, fetch and read the article
   if (input.startsWith("http://") || input.startsWith("https://")) {
     try {
       console.log("Fetching article from URL...")
@@ -93,105 +99,104 @@ async function generateScript(input) {
       })
       const html = await res.text()
 
-      // Extract readable text from HTML — strip all tags
+      // Strip all HTML tags to get readable text
       const text = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
         .replace(/<[^>]+>/g, " ")
         .replace(/\s+/g, " ")
         .trim()
-        .slice(0, 4000) // first 4000 chars is enough for GPT
+        .slice(0, 4000)
 
       context = `Article content:\n${text}`
-      console.log("Article fetched successfully.")
+      console.log("Article fetched.")
     } catch (err) {
-      console.log("Could not fetch URL, using it as topic:", err.message)
+      console.log("Could not fetch URL, using as topic:", err.message)
       context = `Topic: ${input}`
     }
   }
 
-  // Ask OpenAI to write the script
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: `You are a YouTube Shorts scriptwriter. 
-Write a dramatic, engaging 10-second voiceover script.
+        content: `You are a YouTube Shorts scriptwriter.
+Write a dramatic, engaging voiceover script for a 10-second video.
 Rules:
-- Maximum 40 words total
-- 2 sentences maximum
+- Maximum 40 words
+- 2 sentences max
 - Dramatic and engaging tone
 - Must end with exactly: Thanks for watching
 - No emojis, no hashtags, no questions
-- Write ONLY the script, nothing else`
+- Write ONLY the script text, nothing else`
       },
       {
         role: "user",
-        content: `Write a 10-second YouTube Shorts script about this:\n\n${context}`
+        content: `Write a 10-second script about:\n\n${context}`
       }
     ],
-    max_tokens: 100,
+    max_tokens: 120,
     temperature: 0.7
   })
 
   const script = completion.choices[0].message.content.trim()
-  console.log("Script generated:", script)
+  console.log("Script:", script)
   return script
 }
 
 
 // ─────────────────────────────────────────
-// STEP 2 — SCENE BREAKDOWN WITH OPENAI
-// Splits script into 2 scenes
-// Generates proper image prompts and motion prompts
+// STEP 2 — SCENE BREAKDOWN
+// OpenAI splits script into 2 scenes
+// Each gets a real image prompt and motion prompt
 // ─────────────────────────────────────────
 async function splitScenes(script) {
-  console.log("Splitting into scenes with OpenAI...")
+  console.log("Splitting into scenes...")
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: `You split a script into 2 scenes for a short video.
-Return ONLY a valid JSON object. No explanation. No markdown. No backticks.
-Format exactly:
+        content: `Split a script into 2 scenes for a short video.
+Return ONLY valid JSON. No markdown. No explanation. No backticks.
+Format:
 {
   "scene1": {
-    "script": "first half of script",
-    "imagePrompt": "detailed cinematic image description, photorealistic, 4K, no text, no watermark",
-    "motionPrompt": "camera movement description"
+    "script": "first part of script",
+    "imagePrompt": "very detailed cinematic photorealistic image, 4K, dramatic lighting, no text, no watermark",
+    "motionPrompt": "specific camera movement"
   },
   "scene2": {
-    "script": "second half of script",
-    "imagePrompt": "detailed cinematic image description, photorealistic, 4K, no text, no watermark",
-    "motionPrompt": "camera movement description"
+    "script": "second part of script",
+    "imagePrompt": "very detailed cinematic photorealistic image, 4K, dramatic lighting, no text, no watermark",
+    "motionPrompt": "specific camera movement"
   }
 }`
       },
       {
         role: "user",
-        content: `Split this script into 2 scenes:\n\n${script}`
+        content: `Split this into 2 scenes:\n\n${script}`
       }
     ],
-    max_tokens: 500,
+    max_tokens: 600,
     temperature: 0.7
   })
 
   const raw = completion.choices[0].message.content.trim()
-  const scenes = JSON.parse(raw)
+  const data = JSON.parse(raw)
 
   return [
     {
-      script: scenes.scene1.script,
-      imagePrompt: scenes.scene1.imagePrompt,
-      motion: scenes.scene1.motionPrompt
+      script: data.scene1.script,
+      imagePrompt: data.scene1.imagePrompt,
+      motion: data.scene1.motionPrompt
     },
     {
-      script: scenes.scene2.script,
-      imagePrompt: scenes.scene2.imagePrompt,
-      motion: scenes.scene2.motionPrompt
+      script: data.scene2.script,
+      imagePrompt: data.scene2.imagePrompt,
+      motion: data.scene2.motionPrompt
     }
   ]
 }
@@ -199,7 +204,7 @@ Format exactly:
 
 // ─────────────────────────────────────────
 // STEP 3 — IMAGE GENERATION
-// Uses Flux 2 Max on Replicate
+// Flux 2 Max on Replicate
 // ─────────────────────────────────────────
 async function generateImage(prompt, index) {
   console.log(`Generating image ${index + 1}...`)
@@ -226,19 +231,18 @@ async function generateImage(prompt, index) {
 
   let result = await startRes.json()
 
-  if (result.detail && result.detail.includes("Invalid token")) {
-    throw new Error("Replicate API key is invalid. Go to Railway → Variables → fix REPLICATE_API_KEY")
+  if (result.detail?.includes("Invalid token") || result.detail?.includes("Authentication")) {
+    throw new Error("Replicate API key is invalid. Fix REPLICATE_API_KEY in Railway Variables.")
   }
 
-  // Poll until done
   while (result.status !== "succeeded" && result.status !== "failed") {
     await sleep(4000)
-    const pollRes = await fetch(
+    const poll = await fetch(
       `https://api.replicate.com/v1/predictions/${result.id}`,
       { headers: { Authorization: `Bearer ${process.env.REPLICATE_API_KEY}` } }
     )
-    result = await pollRes.json()
-    console.log(`Image ${index + 1} status: ${result.status}`)
+    result = await poll.json()
+    console.log(`Image ${index + 1}: ${result.status}`)
   }
 
   if (result.status === "failed") {
@@ -250,15 +254,14 @@ async function generateImage(prompt, index) {
   const buffer = await imgRes.buffer()
   const filePath = `/tmp/images/img_${index}.jpg`
   fs.writeFileSync(filePath, buffer)
-  console.log(`Image ${index + 1} saved.`)
+  console.log(`Image ${index + 1} done.`)
   return filePath
 }
 
 
 // ─────────────────────────────────────────
 // STEP 4 — VIDEO GENERATION
-// Uses Kling 1.6 on Replicate
-// Image → 5 second cinematic video
+// Kling 1.6 on Replicate — image to 5 second video
 // ─────────────────────────────────────────
 async function generateVideo(imagePath, motionPrompt, index) {
   console.log(`Generating video ${index + 1}...`)
@@ -288,15 +291,15 @@ async function generateVideo(imagePath, motionPrompt, index) {
 
   let result = await startRes.json()
 
-  // Poll until done — Kling takes 2 to 5 minutes
+  // Kling takes 2–5 minutes — keep polling
   while (result.status !== "succeeded" && result.status !== "failed") {
     await sleep(8000)
-    const pollRes = await fetch(
+    const poll = await fetch(
       `https://api.replicate.com/v1/predictions/${result.id}`,
       { headers: { Authorization: `Bearer ${process.env.REPLICATE_API_KEY}` } }
     )
-    result = await pollRes.json()
-    console.log(`Video ${index + 1} status: ${result.status}`)
+    result = await poll.json()
+    console.log(`Video ${index + 1}: ${result.status}`)
   }
 
   if (result.status === "failed") {
@@ -308,27 +311,22 @@ async function generateVideo(imagePath, motionPrompt, index) {
   const buffer = await vidRes.buffer()
   const filePath = `/tmp/videos/video_${index}.mp4`
   fs.writeFileSync(filePath, buffer)
-  console.log(`Video ${index + 1} saved.`)
+  console.log(`Video ${index + 1} done.`)
   return filePath
 }
 
 
 // ─────────────────────────────────────────
 // STEP 5 — VOICE GENERATION
-// Uses ElevenLabs — finds Ellis voice automatically
+// ElevenLabs — Ellis voice, found automatically
 // ─────────────────────────────────────────
 async function getEllisVoiceId() {
   const res = await fetch("https://api.elevenlabs.io/v1/voices", {
     headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY }
   })
   const data = await res.json()
-  const ellis = data.voices?.find((v) =>
-    v.name.toLowerCase().includes("ellis")
-  )
-  if (!ellis) {
-    throw new Error("Ellis voice not found. Check your ELEVENLABS_API_KEY in Railway.")
-  }
-  console.log(`Found Ellis voice: ${ellis.voice_id}`)
+  const ellis = data.voices?.find((v) => v.name.toLowerCase().includes("ellis"))
+  if (!ellis) throw new Error("Ellis voice not found. Check ELEVENLABS_API_KEY in Railway.")
   return ellis.voice_id
 }
 
@@ -351,39 +349,33 @@ async function generateVoice(text, voiceId, index) {
     }
   )
 
-  if (!res.ok) {
-    throw new Error(`ElevenLabs failed: ${res.status}. Check ELEVENLABS_API_KEY in Railway.`)
-  }
+  if (!res.ok) throw new Error(`ElevenLabs failed: ${res.status}. Check ELEVENLABS_API_KEY.`)
 
   const buffer = await res.buffer()
   const filePath = `/tmp/voices/voice_${index}.mp3`
   fs.writeFileSync(filePath, buffer)
-  console.log(`Voice ${index + 1} saved.`)
+  console.log(`Voice ${index + 1} done.`)
   return filePath
 }
 
 
 // ─────────────────────────────────────────
 // STEP 6 — BACKGROUND MUSIC
-// Downloads your Google Drive music file
-// and trims it to exact video duration
+// Downloads your 10-minute track from Google Drive
 // ─────────────────────────────────────────
 async function downloadMusic() {
-  console.log("Downloading background music from Google Drive...")
+  console.log("Downloading music from Google Drive...")
 
   const driveUrl = process.env.MUSIC_DRIVE_URL
   const match =
     driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
     driveUrl.match(/id=([a-zA-Z0-9_-]+)/)
 
-  if (!match) {
-    throw new Error("MUSIC_DRIVE_URL is not a valid Google Drive link. Check Railway Variables.")
-  }
+  if (!match) throw new Error("MUSIC_DRIVE_URL is not a valid Google Drive link.")
 
   const fileId = match[1]
-  const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
-  const res = await fetch(downloadUrl)
-
+  const url = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
+  const res = await fetch(url)
   if (!res.ok) throw new Error(`Music download failed: HTTP ${res.status}`)
 
   const buffer = await res.buffer()
@@ -401,9 +393,7 @@ function getDuration(filePath) {
   return parseFloat(
     execSync(
       `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
-    )
-      .toString()
-      .trim()
+    ).toString().trim()
   )
 }
 
@@ -412,7 +402,6 @@ function trimVideoToAudio(videoPath, audioDuration, index) {
   execSync(
     `ffmpeg -y -i "${videoPath}" -t ${audioDuration} -c:v libx264 -preset fast -crf 23 "${out}"`
   )
-  console.log(`Video ${index + 1} trimmed to ${audioDuration}s`)
   return out
 }
 
@@ -425,17 +414,15 @@ function combineSceneVoice(videoPath, voicePath, index) {
 }
 
 function assembleFinalVideo(scenePaths, musicPath, totalDuration) {
-  // Concat scenes
   const concatFile = `/tmp/concat.txt`
   fs.writeFileSync(concatFile, scenePaths.map((p) => `file '${p}'`).join("\n"))
+
   const concatenated = `/tmp/final/concatenated.mp4`
   execSync(`ffmpeg -y -f concat -safe 0 -i "${concatFile}" -c copy "${concatenated}"`)
 
-  // Trim music to total duration
   const musicTrimmed = `/tmp/final/music_trimmed.mp3`
   execSync(`ffmpeg -y -i "${musicPath}" -t ${totalDuration} -af "volume=0.15" "${musicTrimmed}"`)
 
-  // Mix voice + music, combine with video
   const finalPath = `/tmp/final/final_video.mp4`
   execSync(
     `ffmpeg -y -i "${concatenated}" -i "${musicTrimmed}" ` +
@@ -443,7 +430,6 @@ function assembleFinalVideo(scenePaths, musicPath, totalDuration) {
     `-map 0:v -map "[aout]" -c:v copy -c:a aac "${finalPath}"`
   )
 
-  console.log("Final video assembled.")
   return finalPath
 }
 
@@ -460,6 +446,8 @@ bot.onText(/^do it$/i, (msg) => {
 
 // ─────────────────────────────────────────
 // MAIN PIPELINE
+// Nothing is sent to Telegram except status messages and the final video
+// Everything is saved to Google Drive
 // ─────────────────────────────────────────
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id
@@ -469,11 +457,13 @@ bot.on("message", async (msg) => {
   const input = msg.text
   userState[chatId].step = "processing"
 
-  // Create a Google Drive folder for this session
-  const folderName = `Video_${new Date().toISOString().slice(0, 16).replace("T", "_")}`
-  let driveFolder = null
-
   try {
+
+    // Create session folder on Drive
+    const sessionName = `Video_${new Date().toISOString().slice(0, 16).replace("T", "_")}`
+    const sessionFolder = await createSessionFolder(sessionName)
+    const folderId = sessionFolder.id
+    await bot.sendMessage(chatId, `📁 Session folder created on Google Drive: ${sessionName}`)
 
     // ── SCRIPT ──
     await bot.sendMessage(chatId, "✍️ Reading your input and writing script...")
@@ -485,127 +475,83 @@ bot.on("message", async (msg) => {
     const scenes = await splitScenes(script)
     let sceneText = ""
     scenes.forEach((s, i) => {
-      sceneText += `Scene ${i + 1}\n`
-      sceneText += `Script: ${s.script}\n`
-      sceneText += `Image prompt: ${s.imagePrompt}\n`
-      sceneText += `Motion: ${s.motion}\n\n`
+      sceneText += `Scene ${i + 1}\nScript: ${s.script}\nImage prompt: ${s.imagePrompt}\nMotion: ${s.motion}\n\n`
     })
     await bot.sendMessage(chatId, sceneText)
 
-    // Create Drive folder now
-    try {
-      driveFolder = await createDriveFolder(folderName)
-      console.log(`Drive folder created: ${folderName} (${driveFolder})`)
-    } catch (e) {
-      console.log("Drive folder creation failed, continuing without Drive:", e.message)
-    }
-
     // ── IMAGES ──
-    await bot.sendMessage(chatId, "🖼 Creating images with Flux 2 Max...")
+    await bot.sendMessage(chatId, "🖼 Generating images with Flux 2 Max... (~1-2 min each)")
     const imagePaths = []
     for (let i = 0; i < scenes.length; i++) {
-      await bot.sendMessage(chatId, `Generating image ${i + 1} of ${scenes.length}...`)
+      await bot.sendMessage(chatId, `⏳ Image ${i + 1} of ${scenes.length} generating...`)
       const img = await generateImage(scenes[i].imagePrompt, i)
       imagePaths.push(img)
-      await bot.sendPhoto(chatId, img, { caption: `Image ${i + 1}` })
-
-      // Save to Drive
-      if (driveFolder) {
-        await uploadToDrive(img, `image_${i + 1}.jpg`, "image/jpeg", driveFolder).catch(e =>
-          console.log("Drive upload failed for image:", e.message)
-        )
-      }
+      await uploadToDrive(img, `image_${i + 1}.jpg`, "image/jpeg", folderId)
+      await bot.sendMessage(chatId, `✅ Image ${i + 1} saved to Drive`)
     }
 
     // ── VIDEOS ──
-    await bot.sendMessage(chatId, "🎥 Creating videos with Kling AI... ⏳ takes a few minutes per clip")
+    await bot.sendMessage(chatId, "🎥 Generating videos with Kling AI... (~3-5 min each) ⏳")
     const videoPaths = []
     for (let i = 0; i < scenes.length; i++) {
-      await bot.sendMessage(chatId, `Generating video ${i + 1} of ${scenes.length}... please wait ⏳`)
+      await bot.sendMessage(chatId, `⏳ Video ${i + 1} of ${scenes.length} generating... please wait`)
       const vid = await generateVideo(imagePaths[i], scenes[i].motion, i)
       videoPaths.push(vid)
-      await bot.sendVideo(chatId, vid, { caption: `Raw video ${i + 1}` })
-
-      // Save to Drive
-      if (driveFolder) {
-        await uploadToDrive(vid, `video_raw_${i + 1}.mp4`, "video/mp4", driveFolder).catch(e =>
-          console.log("Drive upload failed for video:", e.message)
-        )
-      }
+      await uploadToDrive(vid, `video_raw_${i + 1}.mp4`, "video/mp4", folderId)
+      await bot.sendMessage(chatId, `✅ Video ${i + 1} saved to Drive`)
     }
 
     // ── VOICE ──
-    await bot.sendMessage(chatId, "🎙 Creating voice narration with Ellis...")
+    await bot.sendMessage(chatId, "🎙 Generating voice narration with Ellis...")
     const voiceId = await getEllisVoiceId()
     const voicePaths = []
     for (let i = 0; i < scenes.length; i++) {
       const voice = await generateVoice(scenes[i].script, voiceId, i)
       voicePaths.push(voice)
-      await bot.sendAudio(chatId, voice, { caption: `Voice ${i + 1}` })
-
-      // Save to Drive
-      if (driveFolder) {
-        await uploadToDrive(voice, `voice_${i + 1}.mp3`, "audio/mpeg", driveFolder).catch(e =>
-          console.log("Drive upload failed for voice:", e.message)
-        )
-      }
+      await uploadToDrive(voice, `voice_${i + 1}.mp3`, "audio/mpeg", folderId)
+      await bot.sendMessage(chatId, `✅ Voice ${i + 1} saved to Drive`)
     }
 
-    // ── TRIM VIDEOS TO MATCH VOICE + COMBINE ──
-    await bot.sendMessage(chatId, "✂️ Cutting each video to match voice length...")
+    // ── TRIM & COMBINE ──
+    await bot.sendMessage(chatId, "✂️ Cutting videos to match voice length...")
     const sceneFinalPaths = []
     let totalDuration = 0
 
     for (let i = 0; i < scenes.length; i++) {
       const audioDuration = getDuration(voicePaths[i])
       totalDuration += audioDuration
-      console.log(`Scene ${i + 1} audio duration: ${audioDuration}s`)
-      const trimmedVideo = trimVideoToAudio(videoPaths[i], audioDuration, i)
-      const sceneFinal = combineSceneVoice(trimmedVideo, voicePaths[i], i)
-      sceneFinalPaths.push(sceneFinal)
+      const trimmed = trimVideoToAudio(videoPaths[i], audioDuration, i)
+      const combined = combineSceneVoice(trimmed, voicePaths[i], i)
+      sceneFinalPaths.push(combined)
+      await bot.sendMessage(chatId, `✅ Scene ${i + 1} cut to ${audioDuration.toFixed(1)}s`)
     }
 
     // ── MUSIC ──
-    await bot.sendMessage(chatId, "🎵 Adding your background music...")
+    await bot.sendMessage(chatId, "🎵 Adding background music...")
     const musicPath = await downloadMusic()
 
     // ── FINAL ASSEMBLY ──
-    await bot.sendMessage(chatId, `🎬 Rendering final video (${totalDuration.toFixed(1)}s total)...`)
+    await bot.sendMessage(chatId, `🎬 Rendering final video (${totalDuration.toFixed(1)}s)...`)
     const finalVideo = assembleFinalVideo(sceneFinalPaths, musicPath, totalDuration)
 
-    // Save final video to Drive
-    let driveLink = ""
-    if (driveFolder) {
-      try {
-        const uploaded = await uploadToDrive(finalVideo, "FINAL_VIDEO.mp4", "video/mp4", driveFolder)
-        driveLink = uploaded.webViewLink
-      } catch (e) {
-        console.log("Drive upload failed for final video:", e.message)
-      }
-    }
+    // Upload final video to Drive
+    const uploaded = await uploadToDrive(finalVideo, "FINAL_VIDEO.mp4", "video/mp4", folderId)
 
-    // ── DELIVERY ──
+    // ── SEND FINAL VIDEO TO TELEGRAM ──
     await bot.sendVideo(chatId, finalVideo, {
-      caption: "🎬 Your final video is ready!"
+      caption: "🎬 Your video is ready!"
     })
 
-    if (driveLink) {
-      await bot.sendMessage(
-        chatId,
-        `✅ Video saved to Google Drive:\n${driveLink}\n\nAll files (images, videos, audio) are in the same folder.`
-      )
-    } else {
-      await bot.sendMessage(chatId, "✅ Done! (Drive saving was skipped — check GDRIVE_CREDENTIALS)")
-    }
+    await bot.sendMessage(
+      chatId,
+      `✅ Video saved to Google Drive\n📁 Folder: ${sessionName}\n🔗 ${uploaded?.webViewLink || "Check your VideoBot folder"}`
+    )
 
     userState[chatId].step = "done"
 
   } catch (err) {
     console.error("Pipeline error:", err)
-    await bot.sendMessage(
-      chatId,
-      `❌ Failed: ${err.message}\n\nSend 'do it' to try again.`
-    )
+    await bot.sendMessage(chatId, `❌ Error: ${err.message}\n\nSend 'do it' to try again.`)
     userState[chatId] = {}
   }
 })
