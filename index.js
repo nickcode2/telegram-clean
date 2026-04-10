@@ -221,29 +221,35 @@ async function generateImage(prompt, index, chatId) {
   if (!pred.id) throw new Error("Image failed to start — check REPLICATE_API_TOKEN")
 
   const result = await withTimeout(pollReplicate(pred.id, `Image ${index + 1}`, chatId), `Image ${index + 1}`)
-  const url = Array.isArray(result.output) ? result.output[0] : result.output
-  const buf = await (await fetch(url)).buffer()
+  const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
+
+  // Save locally for Telegram preview
+  const buf = await (await fetch(imageUrl)).buffer()
   const path = `/tmp/images/img_${index}.jpg`
   fs.writeFileSync(path, buf)
   console.log(`Image ${index + 1} done`)
-  return path
+
+  // Return both path and URL — Kling gets the URL directly (avoids base64 corruption)
+  return { path, url: imageUrl }
 }
 
 
 // ─────────────────────────────────────────
 // STEP 5 — VIDEO (Kling v2.6)
+// Pass image as URL directly — avoids base64 size issues
 // ─────────────────────────────────────────
-async function generateVideo(imgPath, motionPrompt, index, chatId) {
+async function generateVideo(imageUrl, motionPrompt, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  const b64 = `data:image/jpeg;base64,${fs.readFileSync(imgPath).toString("base64")}`
+  console.log(`Video ${index + 1}: image URL → Kling`)
   const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ input: { image: b64, prompt: motionPrompt, duration: 5, aspect_ratio: "16:9" } })
+    body: JSON.stringify({ input: { image: imageUrl, prompt: motionPrompt, duration: 5, aspect_ratio: "16:9" } })
   })
   const pred = await res.json()
-  if (!pred.id) throw new Error(`Video ${index + 1} failed to start`)
+  console.log("Kling response:", JSON.stringify(pred).slice(0, 200))
+  if (!pred.id) throw new Error(`Video ${index + 1} failed to start: ${pred.detail || JSON.stringify(pred)}`)
 
   const result = await withTimeout(pollReplicate(pred.id, `Video ${index + 1}`, chatId), `Video ${index + 1}`)
   const url = Array.isArray(result.output) ? result.output[0] : result.output
@@ -422,9 +428,8 @@ bot.on("message", async msg => {
         const audioDuration = getDuration(voicePath)
         const img = await generateImage(s.imagePrompt, i, chatId)
         await bot.sendMessage(chatId, `🖼 Image prompt used:\n\n${s.imagePrompt}`)
-        // Send the Flux image so we can see what Flux generated BEFORE Kling
-        await bot.sendPhoto(chatId, img, { caption: "📸 This is what Flux generated (before Kling)" })
-        const vidPath = await generateVideo(img, s.motion, i, chatId)
+        await bot.sendPhoto(chatId, img.path, { caption: "📸 Flux generated this (before Kling)" })
+        const vidPath = await generateVideo(img.url, s.motion, i, chatId)
         const elapsed = Math.round((Date.now() - startTime) / 1000)
         sceneResults.push({ videoPath: vidPath, voicePath, audioDuration })
         await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Done in ${elapsed}s`)
