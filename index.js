@@ -161,7 +161,8 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
     body: JSON.stringify({
       input: {
         image: imageUrl,
-        audio: audioUrl
+        audio: audioUrl,
+        prompt: "Person looking directly at camera, maintaining eye contact, natural hand gestures while speaking, confident presenter body language, subtle head movements"
       }
     })
   })
@@ -645,6 +646,27 @@ function getVoiceDelay(sceneIndex) {
   return group % 2 === 0 ? 1.0 : 2.0
 }
 
+// Lip sync scenes: every 5 scenes starting at scene 3 (index 2, 7, 12, 17...)
+function isLipSyncScene(globalSceneIndex) {
+  if (globalSceneIndex < 2) return false
+  return (globalSceneIndex - 2) % 5 === 0
+}
+
+// Build a lip sync scene — no delay, no SFX, video = audio duration exactly
+function buildLipSyncScene(vidPath, voicePath, dur, i) {
+  const norm = `/tmp/videos/norm_${i}.mp4`
+  normalizeSize(vidPath, norm)
+
+  // Trim video to exact audio duration — no padding, no delay
+  const trimmed = `/tmp/videos/trimmed_${i}.mp4`
+  execSync(`ffmpeg -y -i "${norm}" -t ${dur} -c:v copy -an "${trimmed}"`)
+
+  // Mix video with voice only — no SFX, no fade
+  const out = `/tmp/final/scene_${i}.mp4`
+  execSync(`ffmpeg -y -i "${trimmed}" -i "${voicePath}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
+  return out
+}
+
 function buildScene(vidPath, voicePath, dur, i) {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
@@ -737,23 +759,34 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, 
     referencePrompt = scenes[0].imagePrompt
   }
 
-  // Generate all images
-  await bot.sendMessage(chatId, `🖼 Generating ${scenes.length} images...`)
+  // Generate all images (skip lip sync scenes)
+  await bot.sendMessage(chatId, `🖼 Generating images...`)
   const images = []
   const voices = []
+  const lipSyncFlags = []
 
   for (let i = 0; i < scenes.length; i++) {
     if (isStopped(chatId)) throw new Error("Stopped by user")
     const s = scenes[i]
     const absIdx = globalSceneIndex + i
+    const isLipSync = isLipSyncScene(absIdx)
+    lipSyncFlags.push(isLipSync)
+
     try {
       const voicePath = await generateVoice(s.script, absIdx)
       const audioDuration = getDuration(voicePath)
       voices.push({ voicePath, audioDuration })
-      const img = await generateImage(s.imagePrompt, absIdx, chatId)
-      images.push(img)
-      await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${REALISM_STYLE_SUFFIX}`)
-      await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${i + 1} of ${scenes.length}` })
+
+      if (isLipSync) {
+        // Lip sync scene — no image needed
+        images.push(null)
+        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} is a YouTuber lip-sync scene (no image needed)`)
+      } else {
+        const img = await generateImage(s.imagePrompt, absIdx, chatId)
+        images.push(img)
+        await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${REALISM_STYLE_SUFFIX}`)
+        await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${i + 1} of ${scenes.length}` })
+      }
     } catch (err) {
       if (err.message === "Stopped by user") throw err
       console.error(`Image ${i + 1} failed:`, err.message)
@@ -764,8 +797,8 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, 
   }
 
   // Wait for image approval
-  userState[chatId] = { step: "waiting_chunk_image_approval", scenes, images, voices, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt }
-  await bot.sendMessage(chatId, `🖼 All ${images.length} images for chunk ${chunkIndex + 1} generated.\n\n✅ Send "yes" to approve\n🔄 Send "redo 2" or "redo 1,3" to regenerate`)
+  userState[chatId] = { step: "waiting_chunk_image_approval", scenes, images, voices, lipSyncFlags, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt }
+  await bot.sendMessage(chatId, `🖼 All images for chunk ${chunkIndex + 1} generated.\n\n✅ Send "yes" to approve\n🔄 Send "redo 2" or "redo 1,3" to regenerate`)
 
   return { referencePrompt }
 }
@@ -953,27 +986,45 @@ Keep it dramatic and eye-catching for YouTube.`,
 
   // ── Chunk image approval ──
   if (state.step === "waiting_chunk_image_approval") {
-    const { scenes, images, voices, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt } = state
+    const { scenes, images, voices, lipSyncFlags, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt } = state
 
     if (/^yes$/i.test(text)) {
       // Generate videos for this chunk
       try {
-        await bot.sendMessage(chatId, `🎥 Generating ${scenes.length} videos for chunk ${chunkIndex + 1}...`)
+        await bot.sendMessage(chatId, `🎥 Generating videos for chunk ${chunkIndex + 1}...`)
         const videos = []
 
         for (let i = 0; i < scenes.length; i++) {
           if (isStopped(chatId)) { userState[chatId] = {}; return }
-          if (!images[i]) { videos.push(null); continue }
           const absIdx = globalSceneIndex + i
-          try {
-            await bot.sendMessage(chatId, `🎥 Video ${i + 1}/${scenes.length} — ${scenes[i].cameraName}...`)
-            const vidPath = await generateVideo(images[i].url, images[i].path, scenes[i].motion, scenes[i].imagePrompt, absIdx, chatId)
-            videos.push(vidPath)
-            await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} of ${scenes.length}` })
-          } catch (err) {
-            if (err.message === "Stopped by user") { userState[chatId] = {}; return }
-            await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed: ${err.message}`)
-            videos.push(null)
+
+          if (lipSyncFlags[i]) {
+            // LIP SYNC SCENE — use OmniHuman
+            try {
+              await bot.sendMessage(chatId, `🎤 Video ${i + 1}/${scenes.length} — YouTuber lip-sync...`)
+              const faceIdx = getRandomFacePhoto()
+              const facePath = await downloadFacePhoto(faceIdx)
+              const vidPath = await generateLipSync(facePath, voices[i].voicePath, absIdx, chatId)
+              videos.push(vidPath)
+              await bot.sendVideo(chatId, vidPath, { caption: `🎤 LipSync ${i + 1} of ${scenes.length}` })
+            } catch (err) {
+              if (err.message === "Stopped by user") { userState[chatId] = {}; return }
+              await bot.sendMessage(chatId, `⚠️ LipSync ${i + 1} failed: ${err.message}`)
+              videos.push(null)
+            }
+          } else {
+            // NORMAL SCENE — use Kling
+            if (!images[i]) { videos.push(null); continue }
+            try {
+              await bot.sendMessage(chatId, `🎥 Video ${i + 1}/${scenes.length} — ${scenes[i].cameraName}...`)
+              const vidPath = await generateVideo(images[i].url, images[i].path, scenes[i].motion, scenes[i].imagePrompt, absIdx, chatId)
+              videos.push(vidPath)
+              await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} of ${scenes.length}` })
+            } catch (err) {
+              if (err.message === "Stopped by user") { userState[chatId] = {}; return }
+              await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed: ${err.message}`)
+              videos.push(null)
+            }
           }
         }
 
@@ -1013,7 +1064,7 @@ Keep it dramatic and eye-catching for YouTube.`,
 
   // ── Chunk video approval ──
   if (state.step === "waiting_chunk_video_approval") {
-    const { scenes, images, voices, videos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt } = state
+    const { scenes, images, voices, videos, lipSyncFlags, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt } = state
 
     if (/^yes$/i.test(text)) {
       try {
@@ -1026,9 +1077,17 @@ Keep it dramatic and eye-catching for YouTube.`,
         for (const i of validIndices) {
           const absIdx = globalSceneIndex + i
           const { voicePath, audioDuration } = voices[i]
-          const sceneDur = Math.max(TARGET_SCENE_SECONDS, audioDuration + getVoiceDelay(absIdx))
-          chunkDuration += sceneDur
-          scenePaths.push(buildScene(videos[i], voicePath, audioDuration, absIdx))
+
+          if (lipSyncFlags && lipSyncFlags[i]) {
+            // Lip sync scene — no delay, video = audio duration
+            chunkDuration += audioDuration
+            scenePaths.push(buildLipSyncScene(videos[i], voicePath, audioDuration, absIdx))
+          } else {
+            // Normal scene — with delay and SFX
+            const sceneDur = Math.max(TARGET_SCENE_SECONDS, audioDuration + getVoiceDelay(absIdx))
+            chunkDuration += sceneDur
+            scenePaths.push(buildScene(videos[i], voicePath, audioDuration, absIdx))
+          }
         }
 
         const chunkVideo = concatScenes(scenePaths)
@@ -1066,12 +1125,23 @@ Keep it dramatic and eye-catching for YouTube.`,
       const indices = redoMatch[1].split(/[,\s]+/).map(n => parseInt(n) - 1).filter(n => n >= 0 && n < scenes.length)
       try {
         for (const i of indices) {
-          if (!images[i]) continue
           const absIdx = globalSceneIndex + i
-          await bot.sendMessage(chatId, `🔄 Regenerating video ${i + 1}...`)
-          const vidPath = await generateVideo(images[i].url, images[i].path, scenes[i].motion, scenes[i].imagePrompt, absIdx, chatId)
-          videos[i] = vidPath
-          await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} (redone)` })
+          if (lipSyncFlags && lipSyncFlags[i]) {
+            // Redo lip sync
+            await bot.sendMessage(chatId, `🔄 Regenerating lip-sync ${i + 1}...`)
+            const faceIdx = getRandomFacePhoto()
+            const facePath = await downloadFacePhoto(faceIdx)
+            const vidPath = await generateLipSync(facePath, voices[i].voicePath, absIdx, chatId)
+            videos[i] = vidPath
+            await bot.sendVideo(chatId, vidPath, { caption: `🎤 LipSync ${i + 1} (redone)` })
+          } else {
+            // Redo normal video
+            if (!images[i]) continue
+            await bot.sendMessage(chatId, `🔄 Regenerating video ${i + 1}...`)
+            const vidPath = await generateVideo(images[i].url, images[i].path, scenes[i].motion, scenes[i].imagePrompt, absIdx, chatId)
+            videos[i] = vidPath
+            await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} (redone)` })
+          }
         }
         userState[chatId] = { ...state, videos }
         await bot.sendMessage(chatId, `✅ Send "yes" to approve or "redo 2" to redo again`)
