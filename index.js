@@ -15,7 +15,7 @@ const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
 const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
-const TOTAL_SCENES = 2
+const TOTAL_SCENES = 6
 const TARGET_SCENE_SECONDS = 5
 const STEP_TIMEOUT_MS = 8 * 60 * 1000
 
