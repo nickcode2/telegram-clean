@@ -95,10 +95,10 @@ async function callClaudeScript(system, user, maxTokens = 500) {
     system,
     messages: [
       { role: "user", content: user },
-      { role: "assistant", content: "[SCENE 1]\n" }
+      { role: "assistant", content: "[SCENE 1]" }
     ]
   })
-  return "[SCENE 1]\n" + msg.content[0].text
+  return "[SCENE 1]" + msg.content[0].text
 }
 
 
