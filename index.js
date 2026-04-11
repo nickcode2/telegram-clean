@@ -135,9 +135,8 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       input: {
-        image_path: imgBase64,
-        audio_path: audioBase64,
-        resolution: 720
+        image: imgBase64,
+        audio: audioBase64
       }
     })
   })
