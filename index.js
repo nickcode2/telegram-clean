@@ -257,9 +257,13 @@ Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosph
 
 
 // ─────────────────────────────────────────
-// IPHONE PHOTO STYLE — appended to every image prompt
+// REALISM STYLE — appended to every image prompt
 // ─────────────────────────────────────────
-const IPHONE_STYLE_SUFFIX = `\ncaptured as if accidentally photographed on a handheld iPhone, natural smartphone photo aesthetic, no cinematic grading, no dramatic lighting, no professional setup.\nGround level close perspective, 1x iPhone lens look, slightly imperfect framing as if someone nearby quickly took the photo. Main subject with clear action. Secondary subjects reacting or interacting. Environment visible but not staged.\nLighting must feel like real smartphone exposure. Flat natural light. No dramatic shadows. Slight highlight clipping in brightest areas. Uneven shadow transitions. Mild texture noise in darker areas. Realistic skin pores and imperfect texture. Slight sensor grain. Soft contrast. Limited dynamic range. No cinematic contrast. No editorial lighting. No stylized color grading. Natural color balance.\nComposition must feel candid, not staged, not a movie still. Preserve realistic proportions and anatomy. No fantasy elements. Strictly period accurate clothing and tools only.`
+const REALISM_STYLE_SUFFIX = `
+Photorealistic photograph. Shot on a real camera sensor — not CGI, not a render, not digital art, not a painting, not concept art, not 3D, not illustration. This must look like an actual photograph taken by a real person.
+Real human skin with pores, blemishes, and natural imperfections. Real fabric with wrinkles and wear. Real dirt, dust, and grime on surfaces. Natural body proportions and posture.
+Lighting must feel like real smartphone exposure. Flat natural light. No dramatic shadows. Slight highlight clipping in brightest areas. Uneven shadow transitions. Mild texture noise in darker areas. Slight sensor grain. Soft contrast. Limited dynamic range. No cinematic contrast. No editorial lighting. No stylized color grading. Natural color balance.
+Composition must feel candid, not staged, not a movie still. Preserve realistic proportions and anatomy. No fantasy elements. Strictly period accurate clothing and tools only.`
 
 
 // ─────────────────────────────────────────
@@ -268,7 +272,7 @@ const IPHONE_STYLE_SUFFIX = `\ncaptured as if accidentally photographed on a han
 async function generateImage(prompt, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  const fullPrompt = prompt + IPHONE_STYLE_SUFFIX
+  const fullPrompt = prompt + REALISM_STYLE_SUFFIX
   console.log(`Image ${index + 1}: ${fullPrompt.slice(0, 120)}...`)
 
   const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
@@ -597,7 +601,7 @@ bot.on("message", async msg => {
           const voicePath = await generateVoice(s.script, i)
           const audioDuration = getDuration(voicePath)
           const img = await generateImage(s.imagePrompt, i, chatId)
-          await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${IPHONE_STYLE_SUFFIX}`)
+          await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${REALISM_STYLE_SUFFIX}`)
           await bot.sendDocument(chatId, img.path, { caption: "📸 Flux generated this (before Kling)" })
           await bot.sendMessage(chatId, `🎥 Generating video with Kling v2.6... this takes 2-4 min`)
           const vidPath = await generateVideo(img.url, img.path, s.motion, s.imagePrompt, i, chatId)
