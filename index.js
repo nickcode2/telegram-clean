@@ -260,10 +260,11 @@ Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosph
 // REALISM STYLE — appended to every image prompt
 // ─────────────────────────────────────────
 const REALISM_STYLE_SUFFIX = `
-Photorealistic photograph. Shot on a real camera sensor — not CGI, not a render, not digital art, not a painting, not concept art, not 3D, not illustration. This must look like an actual photograph taken by a real person.
-Real human skin with pores, blemishes, and natural imperfections. Real fabric with wrinkles and wear. Real dirt, dust, and grime on surfaces. Natural body proportions and posture.
-Lighting must feel like real smartphone exposure. Flat natural light. No dramatic shadows. Slight highlight clipping in brightest areas. Uneven shadow transitions. Mild texture noise in darker areas. Slight sensor grain. Soft contrast. Limited dynamic range. No cinematic contrast. No editorial lighting. No stylized color grading. Natural color balance.
-Composition must feel candid, not staged, not a movie still. Preserve realistic proportions and anatomy. No fantasy elements. Strictly period accurate clothing and tools only.`
+RAW photograph. Real camera, real sensor, real lens. This must look like an actual photo — not CGI, not a render, not concept art, not illustration, not 3D, not digital art, not a painting, not a movie still, not a video game screenshot, not AI-generated looking.
+Real camera artifacts: natural sensor noise and film grain, subtle chromatic aberration at edges, natural lens vignetting, color fringing on high-contrast edges. Imperfect auto white balance.
+Real physical textures: concrete has cracks and water stains, metal has rust and scratches, fabric has loose threads and wrinkles, skin has pores and blemishes, hair has flyaways, surfaces have dust and wear. Nothing looks new or perfect or clean.
+Available light only — whatever light source exists in the scene must behave like real light. No stylized color grading. No cinematic contrast. Slightly blown highlights in bright areas. Visible noise in shadows. Natural color cast from environment.
+Photo feels like someone was actually there and took this picture.`
 
 
 // ─────────────────────────────────────────
