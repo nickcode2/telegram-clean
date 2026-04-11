@@ -949,7 +949,7 @@ bot.on("message", async msg => {
     }
 
     if (/^ok$/i.test(text)) {
-      userState[chatId] = { step: "waiting_visual_suggestion", ...state }
+      userState[chatId] = { ...state, step: "waiting_visual_suggestion" }
       await bot.sendMessage(chatId, `🎨 Any suggestions for the image prompts?\n\nDescribe visual details like clothing style, environment, era, colors, etc.\n\nOr send "none" to skip.`)
       return
     }
