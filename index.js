@@ -15,7 +15,7 @@ const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN
 const ELLIS_VOICE_ID = "QxpsWUTZAxznFqyH1goJ"
 
-const TOTAL_SCENES = 3
+const TOTAL_SCENES = 2
 const TARGET_SCENE_SECONDS = 5
 const STEP_TIMEOUT_MS = 8 * 60 * 1000
 
@@ -492,10 +492,11 @@ function normalizeSize(input, output) {
 }
 
 function getVoiceDelay(sceneIndex) {
-  // Scene 0: 0.5s at START, all others: delay at END
+  // Scene 0: 0.5s at START
+  // Pattern: 3 scenes with 1s at END, then 3 scenes with 2s at END, repeat
   if (sceneIndex === 0) return 0.5
-  if (sceneIndex % 3 === 0) return 2.0
-  return 1.0
+  const group = Math.floor((sceneIndex - 1) / 3)
+  return group % 2 === 0 ? 1.0 : 2.0
 }
 
 function buildScene(vidPath, voicePath, dur, i) {
@@ -503,11 +504,28 @@ function buildScene(vidPath, voicePath, dur, i) {
   normalizeSize(vidPath, norm)
 
   const delay = getVoiceDelay(i)
-  // Always use TARGET_SCENE_SECONDS (5s) as scene length, not voice duration
-  const sceneDuration = Math.max(TARGET_SCENE_SECONDS, dur + delay)
-  const trimmed = `/tmp/videos/trimmed_${i}.mp4`
-  execSync(`ffmpeg -y -i "${norm}" -t ${sceneDuration} -c:v copy -c:a copy "${trimmed}"`)
+  const totalAudioNeeded = i === 0 ? dur + delay : dur + delay
+  const videoDuration = getDuration(norm)
 
+  // If voice+delay is longer than video, slow down video with optical flow interpolation
+  let prepared = norm
+  if (totalAudioNeeded > videoDuration) {
+    const slowFactor = totalAudioNeeded / videoDuration
+    console.log(`Scene ${i + 1}: voice+delay (${totalAudioNeeded.toFixed(1)}s) > video (${videoDuration.toFixed(1)}s), slowing by ${slowFactor.toFixed(2)}x with minterpolate`)
+    const slowed = `/tmp/videos/slowed_${i}.mp4`
+    execSync(
+      `ffmpeg -y -i "${norm}" -vf "setpts=${slowFactor}*PTS,minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:vsbmc=1" -an -c:v libx264 -preset fast -crf 18 "${slowed}"`,
+      { timeout: 120000 }
+    )
+    prepared = slowed
+  }
+
+  // Trim video to exact needed duration
+  const sceneDuration = Math.max(TARGET_SCENE_SECONDS, totalAudioNeeded)
+  const trimmed = `/tmp/videos/trimmed_${i}.mp4`
+  execSync(`ffmpeg -y -i "${prepared}" -t ${sceneDuration} -c:v copy -an "${trimmed}"`)
+
+  // Build voice with delay
   const delayedVoice = `/tmp/voices/delayed_${i}.mp3`
   if (i === 0) {
     // Scene 1: silence BEFORE voice (0.5s intro pause)
@@ -517,11 +535,20 @@ function buildScene(vidPath, voicePath, dur, i) {
     execSync(`ffmpeg -y -i "${voicePath}" -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
   }
 
+  // Mix video + Kling SFX + voice
   const out = `/tmp/final/scene_${i}.mp4`
-  if (hasAudio(trimmed)) {
-    const sfxVol = detectVocalContent(trimmed) ? 0.10 : 0.15
+  // Re-add audio from original Kling video if it has any
+  const origHasAudio = hasAudio(norm)
+  if (origHasAudio) {
+    // Extract and stretch Kling audio to match new duration
+    const klingAudio = `/tmp/videos/kling_audio_${i}.aac`
+    try {
+      execSync(`ffmpeg -y -i "${norm}" -vn -c:a aac -ar 44100 "${klingAudio}"`)
+    } catch { }
+
+    const sfxVol = detectVocalContent(norm) ? 0.10 : 0.15
     execSync(
-      `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -filter_complex "[0:a]volume=${sfxVol}[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+      `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -i "${klingAudio}" -filter_complex "[2:a]volume=${sfxVol}[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
     )
   } else {
     execSync(`ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
