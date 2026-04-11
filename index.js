@@ -635,8 +635,6 @@ bot.on("message", async msg => {
       await bot.sendMessage(chatId, `❌ Fatal: ${err.message}\n\nSend 'do it' to try again.`)
       userState[chatId] = {}
     }
-      return
-    }
-
+    return
   }
 })
