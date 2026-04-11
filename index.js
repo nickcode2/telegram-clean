@@ -155,7 +155,7 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
   const audioUrl = await uploadToReplicate(voicePath, "audio/mpeg")
 
   console.log(`LipSync ${index + 1}: sending to OmniHuman`)
-  const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human/predictions", {
+  const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human-1.5/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -200,7 +200,7 @@ bot.onText(/^test lipsync$/i, msg => {
 
 bot.onText(/^lipsync schema$/i, async msg => {
   try {
-    const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human", {
+    const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human-1.5", {
       headers: { Authorization: `Bearer ${REPLICATE_TOKEN}` }
     })
     const data = await res.json()
