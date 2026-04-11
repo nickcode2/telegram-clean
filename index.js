@@ -175,13 +175,16 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
   const rawPath = `/tmp/videos/lipsync_${index}_raw.mp4`
   fs.writeFileSync(rawPath, buf)
 
-  // Add slight zoom in effect and normalize to 1280x720
+  // Trim to exact audio length and normalize to 1280x720 — no zoom, no effects
+  const audioDuration = getDuration(voicePath)
+  console.log(`LipSync ${index + 1}: audio is ${audioDuration.toFixed(1)}s, trimming video to match`)
+
   const path = `/tmp/videos/lipsync_${index}.mp4`
   execSync(
-    `ffmpeg -y -i "${rawPath}" -vf "scale=1280:720,zoompan=z='min(zoom+0.0008,1.04)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=150:s=1280x720:fps=30" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${path}"`
+    `ffmpeg -y -i "${rawPath}" -t ${audioDuration} -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${path}"`
   )
 
-  console.log(`LipSync ${index + 1}: done`)
+  console.log(`LipSync ${index + 1}: done (${audioDuration.toFixed(1)}s)`)
   return path
 }
 
