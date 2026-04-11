@@ -429,7 +429,7 @@ function normalizeSize(input, output) {
 }
 
 function getVoiceDelay(sceneIndex) {
-  // Scene 0: 0.5s, every 3rd scene (3, 6, 9...): 2s, all others: 1s
+  // Scene 0: 0.5s at START, all others: delay at END
   if (sceneIndex === 0) return 0.5
   if (sceneIndex % 3 === 0) return 2.0
   return 1.0
@@ -439,15 +439,20 @@ function buildScene(vidPath, voicePath, dur, i) {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
 
+  const delay = getVoiceDelay(i)
   // Always use TARGET_SCENE_SECONDS (5s) as scene length, not voice duration
-  const sceneDuration = Math.max(TARGET_SCENE_SECONDS, dur + getVoiceDelay(i))
+  const sceneDuration = Math.max(TARGET_SCENE_SECONDS, dur + delay)
   const trimmed = `/tmp/videos/trimmed_${i}.mp4`
   execSync(`ffmpeg -y -i "${norm}" -t ${sceneDuration} -c:v copy -c:a copy "${trimmed}"`)
 
-  // Add silence before voice for breathing room
-  const delay = getVoiceDelay(i)
   const delayedVoice = `/tmp/voices/delayed_${i}.mp3`
-  execSync(`ffmpeg -y -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -i "${voicePath}" -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
+  if (i === 0) {
+    // Scene 1: silence BEFORE voice (0.5s intro pause)
+    execSync(`ffmpeg -y -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -i "${voicePath}" -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
+  } else {
+    // All other scenes: voice first, silence AFTER (breathing room at end)
+    execSync(`ffmpeg -y -i "${voicePath}" -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
+  }
 
   const out = `/tmp/final/scene_${i}.mp4`
   if (hasAudio(trimmed)) {
@@ -567,7 +572,7 @@ bot.on("message", async msg => {
   if (state.step === "waiting_visual_suggestion") {
     const visualSuggestion = /^none$/i.test(text) ? "" : text
     const { input, topic, rawScript } = state
-    userState[chatId] = { step: "processing" }
+    userState[chatId] = { step: "generating_images", input, topic, rawScript, visualSuggestion }
 
     try {
       // ── VISUAL STYLE ──
@@ -578,98 +583,220 @@ bot.on("message", async msg => {
       // ── SCENES ──
       await bot.sendMessage(chatId, "🎬 Building scenes...")
       const scenes = await buildScenes(rawScript, TOTAL_SCENES, style, visualSuggestion)
-      scenes.forEach((s, i) => {
-        console.log(`Scene ${i + 1} prompt: ${s.imagePrompt.slice(0, 100)}...`)
-      })
       let plan = ""
       scenes.forEach((s, i) => {
         plan += `Scene ${i + 1}: ${s.cameraName} | 📐 ${s.angleName}${i === 0 ? " 🔥" : ""}\n`
       })
       await bot.sendMessage(chatId, plan)
 
-      // ── GENERATE SCENES ──
-      const sceneResults = []
+      // ── GENERATE ALL IMAGES ──
+      await bot.sendMessage(chatId, `🖼 Generating ${scenes.length} images...`)
+      const images = []
+      const voices = []
 
       for (let i = 0; i < scenes.length; i++) {
-        if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Stopped."); userState[chatId] = {}; return }
-
+        if (isStopped(chatId)) { userState[chatId] = {}; return }
         const s = scenes[i]
-        const startTime = Date.now()
-
         try {
-          await bot.sendMessage(chatId, `⏳ Scene ${i + 1}/${scenes.length}${i === 0 ? " [OPENING]" : ""} — ${s.cameraName}...`)
+          await bot.sendMessage(chatId, `⏳ Image ${i + 1}/${scenes.length}...`)
           const voicePath = await generateVoice(s.script, i)
           const audioDuration = getDuration(voicePath)
+          voices.push({ voicePath, audioDuration })
           const img = await generateImage(s.imagePrompt, i, chatId)
+          images.push(img)
           await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${REALISM_STYLE_SUFFIX}`)
-          await bot.sendDocument(chatId, img.path, { caption: "📸 Flux generated this (before Kling)" })
-          await bot.sendMessage(chatId, `🎥 Generating video with Kling v2.6... this takes 2-4 min`)
-          const vidPath = await generateVideo(img.url, img.path, s.motion, s.imagePrompt, i, chatId)
-          const elapsed = Math.round((Date.now() - startTime) / 1000)
-          sceneResults.push({ videoPath: vidPath, voicePath, audioDuration })
-          await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Done in ${elapsed}s`)
+          await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${i + 1} of ${scenes.length}` })
         } catch (err) {
           if (err.message === "Stopped by user") { userState[chatId] = {}; return }
-          console.error(`Scene ${i + 1} failed:`, err.message)
-          await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} failed: ${err.message}\n→ Continuing...`)
-          sceneResults.push(null)
+          console.error(`Image ${i + 1} failed:`, err.message)
+          await bot.sendMessage(chatId, `⚠️ Image ${i + 1} failed: ${err.message}`)
+          images.push(null)
+          voices.push(null)
         }
       }
 
-      const validScenes = sceneResults.filter(s => s !== null)
-      if (validScenes.length === 0) throw new Error("All scenes failed")
-
-      // ── BUILD ──
-      await bot.sendMessage(chatId, `✂️ Building ${validScenes.length} scene(s)...`)
-      const scenePaths = []
-      let totalDuration = 0
-
-      for (let i = 0; i < validScenes.length; i++) {
-        try {
-          const { videoPath, voicePath, audioDuration } = validScenes[i]
-          const sceneDur = Math.max(TARGET_SCENE_SECONDS, audioDuration + getVoiceDelay(i))
-          totalDuration += sceneDur
-          scenePaths.push(buildScene(videoPath, voicePath, audioDuration, i))
-        } catch (e) {
-          console.error(`Build scene ${i + 1}:`, e.message)
-          await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} build failed — skipping`)
-        }
+      userState[chatId] = {
+        step: "waiting_image_approval",
+        input, topic, rawScript, visualSuggestion,
+        scenes, style, images, voices
       }
-
-      if (scenePaths.length === 0) throw new Error("No scenes built")
-
-      // ── JOIN ──
-      const joined = concatScenes(scenePaths)
-
-      // ── MUSIC ──
-      let finalVideo = joined
-      try {
-        await bot.sendMessage(chatId, "🎵 Adding music...")
-        const musicPath = await downloadMusic()
-        finalVideo = addMusicHD(joined, musicPath, totalDuration)
-      } catch (e) {
-        console.error("Music failed:", e.message)
-        await bot.sendMessage(chatId, "⚠️ Music failed — delivering without it")
-      }
-
-      // ── DELIVER ──
-      await bot.sendVideo(chatId, finalVideo, {
-        width: 1280,
-        height: 720,
-        caption: `🎬 ${scenePaths.length}-scene video (${totalDuration.toFixed(1)}s)\n🎤 Voice 100% | 🔊 SFX 15% | 🎵 Music 40%`
-      })
-      await bot.sendDocument(chatId, finalVideo, {
-        caption: `📁 HD file (YouTube-ready) — no Telegram compression`
-      })
-
-      await bot.sendMessage(chatId, "✅ Done! Send 'do it' for another.")
-      userState[chatId].step = "done"
+      await bot.sendMessage(chatId, `🖼 All ${images.length} images generated.\n\n✅ Send "yes" to approve all\n🔄 Send "redo 2" or "redo 1,3" to regenerate specific images`)
 
     } catch (err) {
       console.error("Fatal:", err)
       await bot.sendMessage(chatId, `❌ Fatal: ${err.message}\n\nSend 'do it' to try again.`)
       userState[chatId] = {}
     }
+    return
+  }
+
+  // ── STEP: Image approval ──
+  if (state.step === "waiting_image_approval") {
+    const { scenes, style, images, voices, input, topic, rawScript, visualSuggestion } = state
+
+    if (/^yes$/i.test(text)) {
+      // Approved — generate videos
+      userState[chatId] = { step: "generating_videos", scenes, style, images, voices, input, topic, rawScript }
+
+      try {
+        await bot.sendMessage(chatId, `🎥 Generating ${scenes.length} videos with Kling v2.6... this takes 2-4 min each`)
+        const videos = []
+
+        for (let i = 0; i < scenes.length; i++) {
+          if (isStopped(chatId)) { userState[chatId] = {}; return }
+          if (!images[i]) { videos.push(null); continue }
+          const s = scenes[i]
+          try {
+            await bot.sendMessage(chatId, `🎥 Video ${i + 1}/${scenes.length} — ${s.cameraName}...`)
+            const vidPath = await generateVideo(images[i].url, images[i].path, s.motion, s.imagePrompt, i, chatId)
+            videos.push(vidPath)
+            await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} of ${scenes.length}` })
+          } catch (err) {
+            if (err.message === "Stopped by user") { userState[chatId] = {}; return }
+            console.error(`Video ${i + 1} failed:`, err.message)
+            await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed: ${err.message}`)
+            videos.push(null)
+          }
+        }
+
+        userState[chatId] = {
+          step: "waiting_video_approval",
+          scenes, style, images, voices, videos, input, topic, rawScript
+        }
+        await bot.sendMessage(chatId, `🎬 All ${videos.length} videos generated.\n\n✅ Send "yes" to approve all and finish editing\n🔄 Send "redo 2" or "redo 1,3" to regenerate specific videos`)
+
+      } catch (err) {
+        console.error("Fatal:", err)
+        await bot.sendMessage(chatId, `❌ Fatal: ${err.message}\n\nSend 'do it' to try again.`)
+        userState[chatId] = {}
+      }
+      return
+    }
+
+    // Handle "redo 2" or "redo 1,3"
+    const redoMatch = text.match(/^redo\s+([\d,\s]+)$/i)
+    if (redoMatch) {
+      const indices = redoMatch[1].split(/[,\s]+/).map(n => parseInt(n) - 1).filter(n => n >= 0 && n < scenes.length)
+      if (indices.length === 0) {
+        await bot.sendMessage(chatId, `Invalid image numbers. Use "redo 1" or "redo 1,3"`)
+        return
+      }
+
+      try {
+        for (const i of indices) {
+          if (isStopped(chatId)) { userState[chatId] = {}; return }
+          await bot.sendMessage(chatId, `🔄 Regenerating image ${i + 1}...`)
+          const img = await generateImage(scenes[i].imagePrompt, i, chatId)
+          images[i] = img
+          await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${scenes[i].imagePrompt}${REALISM_STYLE_SUFFIX}`)
+          await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${i + 1} (redone)` })
+        }
+        userState[chatId] = { ...state, images }
+        await bot.sendMessage(chatId, `✅ Send "yes" to approve all or "redo 2" to redo again`)
+      } catch (err) {
+        console.error("Redo failed:", err)
+        await bot.sendMessage(chatId, `⚠️ Redo failed: ${err.message}\nTry again or send "yes" to continue with current images`)
+      }
+      return
+    }
+
+    await bot.sendMessage(chatId, `Send "yes" to approve or "redo 2" / "redo 1,3" to regenerate.`)
+    return
+  }
+
+  // ── STEP: Video approval ──
+  if (state.step === "waiting_video_approval") {
+    const { scenes, images, voices, videos, input, topic, rawScript } = state
+
+    if (/^yes$/i.test(text)) {
+      userState[chatId] = { step: "finalizing" }
+
+      try {
+        const validIndices = videos.map((v, i) => v && voices[i] ? i : -1).filter(i => i >= 0)
+        if (validIndices.length === 0) throw new Error("No valid scenes to build")
+
+        // ── BUILD ──
+        await bot.sendMessage(chatId, `✂️ Building ${validIndices.length} scene(s)...`)
+        const scenePaths = []
+        let totalDuration = 0
+
+        for (const i of validIndices) {
+          try {
+            const { voicePath, audioDuration } = voices[i]
+            const sceneDur = Math.max(TARGET_SCENE_SECONDS, audioDuration + getVoiceDelay(i))
+            totalDuration += sceneDur
+            scenePaths.push(buildScene(videos[i], voicePath, audioDuration, i))
+          } catch (e) {
+            console.error(`Build scene ${i + 1}:`, e.message)
+            await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} build failed — skipping`)
+          }
+        }
+
+        if (scenePaths.length === 0) throw new Error("No scenes built")
+
+        // ── JOIN ──
+        const joined = concatScenes(scenePaths)
+
+        // ── MUSIC ──
+        let finalVideo = joined
+        try {
+          await bot.sendMessage(chatId, "🎵 Adding music...")
+          const musicPath = await downloadMusic()
+          finalVideo = addMusicHD(joined, musicPath, totalDuration)
+        } catch (e) {
+          console.error("Music failed:", e.message)
+          await bot.sendMessage(chatId, "⚠️ Music failed — delivering without it")
+        }
+
+        // ── DELIVER ──
+        await bot.sendVideo(chatId, finalVideo, {
+          width: 1280,
+          height: 720,
+          caption: `🎬 ${scenePaths.length}-scene video (${totalDuration.toFixed(1)}s)\n🎤 Voice 100% | 🔊 SFX 15% | 🎵 Music 40%`
+        })
+        await bot.sendDocument(chatId, finalVideo, {
+          caption: `📁 HD file (YouTube-ready) — no Telegram compression`
+        })
+
+        await bot.sendMessage(chatId, "✅ Done! Send 'do it' for another.")
+        userState[chatId] = { step: "done" }
+
+      } catch (err) {
+        console.error("Fatal:", err)
+        await bot.sendMessage(chatId, `❌ Fatal: ${err.message}\n\nSend 'do it' to try again.`)
+        userState[chatId] = {}
+      }
+      return
+    }
+
+    // Handle "redo 2" or "redo 1,3" for videos
+    const redoMatch = text.match(/^redo\s+([\d,\s]+)$/i)
+    if (redoMatch) {
+      const indices = redoMatch[1].split(/[,\s]+/).map(n => parseInt(n) - 1).filter(n => n >= 0 && n < scenes.length)
+      if (indices.length === 0) {
+        await bot.sendMessage(chatId, `Invalid video numbers. Use "redo 1" or "redo 1,3"`)
+        return
+      }
+
+      try {
+        for (const i of indices) {
+          if (isStopped(chatId)) { userState[chatId] = {}; return }
+          if (!images[i]) { await bot.sendMessage(chatId, `⚠️ No image for scene ${i + 1}, skipping`); continue }
+          await bot.sendMessage(chatId, `🔄 Regenerating video ${i + 1}...`)
+          const vidPath = await generateVideo(images[i].url, images[i].path, scenes[i].motion, scenes[i].imagePrompt, i, chatId)
+          videos[i] = vidPath
+          await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} (redone)` })
+        }
+        userState[chatId] = { ...state, videos }
+        await bot.sendMessage(chatId, `✅ Send "yes" to approve all or "redo 2" to redo again`)
+      } catch (err) {
+        console.error("Video redo failed:", err)
+        await bot.sendMessage(chatId, `⚠️ Redo failed: ${err.message}\nTry again or send "yes" to continue`)
+      }
+      return
+    }
+
+    await bot.sendMessage(chatId, `Send "yes" to approve or "redo 2" / "redo 1,3" to regenerate.`)
     return
   }
 })
