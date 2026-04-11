@@ -388,6 +388,10 @@ Return ONLY valid JSON — no markdown:
 }
 
 
+const THUMBNAIL_STYLE_SUFFIX = `
+Photorealistic photograph, super high definition, ultra sharp detail. High contrast with vibrant saturated colors that pop and catch the eye. Bold dramatic lighting. Every detail is crisp and clear even at small sizes. Image demands attention and makes people want to click.`
+
+
 // ─────────────────────────────────────────
 // STEP 3 — THUMBNAIL
 // ─────────────────────────────────────────
@@ -406,7 +410,33 @@ Write ONLY the image description, nothing else.`,
     400
   )
 
-  return await generateImage(thumbPrompt.trim(), 999, chatId)
+  // Use thumbnail suffix instead of realism suffix
+  const fullPrompt = thumbPrompt.trim() + THUMBNAIL_STYLE_SUFFIX
+  console.log(`Thumbnail: ${fullPrompt.slice(0, 120)}...`)
+
+  const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: {
+        prompt: fullPrompt,
+        aspect_ratio: "16:9",
+        width: 1344,
+        height: 768,
+        output_format: "jpg",
+        output_quality: 95
+      }
+    })
+  })
+  const pred = await res.json()
+  if (!pred.id) throw new Error(`Thumbnail failed to start: ${pred.detail || JSON.stringify(pred)}`)
+
+  const result = await withTimeout(pollReplicate(pred.id, "Thumbnail", chatId), "Thumbnail")
+  const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
+  const buf = await (await fetch(imageUrl)).buffer()
+  const path = `/tmp/images/thumbnail.jpg`
+  fs.writeFileSync(path, buf)
+  return { path, url: imageUrl }
 }
 
 
@@ -463,14 +493,16 @@ async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalScen
     let systemPrompt
     if (!referencePrompt) {
       systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
-Describe: the location, environment, objects, sky, light, time of day, colors, atmosphere.
+IMPORTANT: Include PEOPLE or CHARACTERS in the scene — show them doing something relevant to the narration. Scenes with human subjects are more engaging.
+Describe: who is in the scene and what they're doing, the location, environment, objects, sky, light, time of day, colors, atmosphere.
 Also establish: clothing style, architecture style, technology level, color palette of the world.
 Be specific and cinematic.
 Camera angle: ${angle.prompt}.
 Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`
     } else {
       systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
-Describe: the location, environment, objects, sky, light, time of day, colors, atmosphere.
+IMPORTANT: Include PEOPLE or CHARACTERS in the scene whenever the script mentions or implies their presence. Show them doing something relevant — exploring, working, reacting, observing. Only omit people if the script describes an empty uninhabited place.
+Describe: who is in the scene and what they're doing, the location, environment, objects, sky, light, time of day, colors, atmosphere.
 Be specific and cinematic.
 Camera angle: ${angle.prompt}.
 Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}
@@ -500,8 +532,7 @@ Keep the SAME: clothing style, architecture style, technology level, color palet
 // REALISM STYLE — appended to every image prompt
 // ─────────────────────────────────────────
 const REALISM_STYLE_SUFFIX = `
-Surfaces show natural real-world variation: some areas are clean and maintained, others show light wear such as small scratches, minor stains, and subtle dirt buildup. Materials have realistic imperfections without looking abandoned or damaged: modern structures appear functional and in use, with slight irregularities in texture and color. Ground and surroundings feel naturally used: faint tire marks, occasional debris, small inconsistencies, but not dirty or neglected. Textures are varied and non-uniform without repetition, balancing clean areas with mild wear. Environment feels actively used and maintained, not abandoned, not ruined, not post-apocalyptic.
-Overall image should feel accidental and observational, like a real moment captured quickly, not staged, not designed, not rendered. It must feel physically believable and grounded in reality.`
+Photorealistic photograph with natural imperfections: slight sensor noise, subtle focus variation, real-world micro-details. Materials and surfaces look physically real — touched, used, existing in the real world. Overall image feels like a candid moment captured by someone who was actually there.`
 
 
 // ─────────────────────────────────────────
@@ -818,6 +849,9 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, 
     lipSyncFlags.push(isLipSync)
 
     try {
+      // Show the script text for this scene
+      await bot.sendMessage(chatId, `📝 Scene ${i + 1} script:\n"${s.script}"`)
+
       const voicePath = await generateVoice(s.script, absIdx)
       const audioDuration = getDuration(voicePath)
       voices.push({ voicePath, audioDuration })
@@ -825,7 +859,7 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, 
       if (isLipSync) {
         // Lip sync scene — no image needed
         images.push(null)
-        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} is a YouTuber lip-sync scene (no image needed)`)
+        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — YouTuber lip-sync (no image needed)`)
       } else {
         const img = await generateImage(s.imagePrompt, absIdx, chatId)
         images.push(img)
