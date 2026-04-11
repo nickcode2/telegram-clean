@@ -370,16 +370,30 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
   const result = await withTimeout(pollReplicate(pred.id, `Video ${index + 1}`, chatId), `Video ${index + 1}`)
   const url = Array.isArray(result.output) ? result.output[0] : result.output
   const buf = await (await fetch(url)).buffer()
+  const rawPath = `/tmp/videos/video_${index}_raw.mp4`
   const path = `/tmp/videos/video_${index}.mp4`
-  fs.writeFileSync(path, buf)
+  fs.writeFileSync(rawPath, buf)
 
-  // Log actual video dimensions
+  // ENFORCE 16:9 — if Kling returned wrong aspect ratio, force it
   try {
-    const dims = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${path}"`).toString().trim()
-    console.log(`Video ${index + 1}: ${(buf.length / 1024 / 1024).toFixed(1)}MB — dimensions: ${dims}`)
-  } catch {
-    console.log(`Video ${index + 1}: ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+    const dims = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${rawPath}"`).toString().trim()
+    const [w, h] = dims.split(",").map(Number)
+    const ratio = w / h
+    console.log(`Video ${index + 1} raw: ${w}x${h} (ratio: ${ratio.toFixed(2)}) — ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+
+    if (ratio < 1.6 || ratio > 1.9) {
+      // NOT 16:9 — force crop and scale to 1280x720
+      console.log(`Video ${index + 1}: WRONG RATIO ${ratio.toFixed(2)}, forcing 16:9 crop`)
+      execSync(`ffmpeg -y -i "${rawPath}" -vf "crop=ih*16/9:ih,scale=1280:720,setsar=1" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${path}"`)
+    } else {
+      // Already 16:9 — just copy
+      fs.copyFileSync(rawPath, path)
+    }
+  } catch (e) {
+    console.log(`Video ${index + 1}: could not check dims, using raw`)
+    fs.copyFileSync(rawPath, path)
   }
+
   return path
 }
 
