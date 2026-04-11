@@ -121,18 +121,28 @@ function getRandomFacePhoto() {
 // ─────────────────────────────────────────
 async function uploadToReplicate(filePath, contentType) {
   const fileData = fs.readFileSync(filePath)
+  const filename = filePath.split("/").pop()
+  const boundary = "----ReplicateUpload" + Date.now()
+
+  let body = `--${boundary}\r\n`
+  body += `Content-Disposition: form-data; name="content"; filename="${filename}"\r\n`
+  body += `Content-Type: ${contentType}\r\n\r\n`
+
+  const bodyStart = Buffer.from(body, "utf-8")
+  const bodyEnd = Buffer.from(`\r\n--${boundary}--\r\n`, "utf-8")
+  const fullBody = Buffer.concat([bodyStart, fileData, bodyEnd])
+
   const res = await fetch("https://api.replicate.com/v1/files", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${REPLICATE_TOKEN}`,
-      "Content-Type": contentType,
-      "X-Filename": filePath.split("/").pop()
+      "Content-Type": `multipart/form-data; boundary=${boundary}`
     },
-    body: fileData
+    body: fullBody
   })
   const data = await res.json()
   if (!data.urls?.get) throw new Error(`File upload failed: ${JSON.stringify(data).slice(0, 200)}`)
-  console.log(`Uploaded ${filePath.split("/").pop()} → ${data.urls.get}`)
+  console.log(`Uploaded ${filename} → ${data.urls.get}`)
   return data.urls.get
 }
 
