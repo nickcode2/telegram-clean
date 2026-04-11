@@ -321,6 +321,15 @@ async function generateImage(prompt, index, chatId) {
 async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
+  // Force image to 16:9 before sending to Kling (in case Flux returned wrong dimensions)
+  const resizedPath = `/tmp/images/img_${index}_16x9.jpg`
+  execSync(`ffmpeg -y -i "${imagePath}" -vf "scale=1344:768:force_original_aspect_ratio=decrease,pad=1344:768:(ow-iw)/2:(oh-ih)/2" -q:v 2 "${resizedPath}"`)
+
+  // Upload the resized image and get a fresh URL
+  const resizedBuf = fs.readFileSync(resizedPath)
+  const resizedBase64 = resizedBuf.toString("base64")
+  const resizedDataUri = `data:image/jpeg;base64,${resizedBase64}`
+
   // Detect if the scene has people and add natural human motion
   const peopleWords = /\b(people|person|soldier|military|personnel|crowd|man|woman|figure|worker|officer|guard|child|group)\b/i
   let fullPrompt = motionPrompt
@@ -328,16 +337,14 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
     fullPrompt += ", people move naturally — subtle gestures, shifting weight, turning heads, walking slowly, conversing with each other"
   }
 
-  // Pass the Flux image URL directly — already 1344x768 (16:9)
-  // aspect_ratio set explicitly as backup
-  console.log(`Video ${index + 1}: sending to Kling as URL`)
+  console.log(`Video ${index + 1}: sending to Kling (forced 16:9)`)
   console.log(`Video ${index + 1} prompt: ${fullPrompt}`)
   const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       input: {
-        start_image: imageUrl,
+        start_image: resizedDataUri,
         prompt: fullPrompt,
         duration: 5,
         aspect_ratio: "16:9",
@@ -354,7 +361,14 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
   const buf = await (await fetch(url)).buffer()
   const path = `/tmp/videos/video_${index}.mp4`
   fs.writeFileSync(path, buf)
-  console.log(`Video ${index + 1}: ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+
+  // Log actual video dimensions
+  try {
+    const dims = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${path}"`).toString().trim()
+    console.log(`Video ${index + 1}: ${(buf.length / 1024 / 1024).toFixed(1)}MB — dimensions: ${dims}`)
+  } catch {
+    console.log(`Video ${index + 1}: ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+  }
   return path
 }
 
