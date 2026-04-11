@@ -195,10 +195,11 @@ Return ONLY valid JSON — no markdown:
 // Image prompt = read the script line, describe what you see
 // 100 words of the physical scene
 // ─────────────────────────────────────────
-async function buildScenes(rawScript, totalScenes, style) {
+async function buildScenes(rawScript, totalScenes, style, visualSuggestion = "") {
   const matches = rawScript.match(/\*?\*?\[SCENE \d+\]\*?\*?[^\[]+/g) || []
   const texts = matches.map(s => s.replace(/\*?\*?\[SCENE \d+\]\*?\*?/, "").trim())
 
+  const userVisualNote = visualSuggestion ? `\nUser's visual direction: ${visualSuggestion}` : ""
   const scenes = []
 
   for (let i = 0; i < totalScenes; i++) {
@@ -210,7 +211,7 @@ async function buildScenes(rawScript, totalScenes, style) {
       `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
 Describe: the location, environment, objects, sky, light, time of day, colors, atmosphere.
 Be specific and cinematic.
-Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.`,
+Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`,
       `Script: "${script}"`,
       200
     )
@@ -520,18 +521,31 @@ bot.on("message", async msg => {
     }
 
     if (/^ok$/i.test(text)) {
-      const { input, topic, rawScript } = state
-      userState[chatId] = { step: "processing" }
+      userState[chatId] = { step: "waiting_visual_suggestion", input: state.input, topic: state.topic, rawScript: state.rawScript }
+      await bot.sendMessage(chatId, `🎨 Any suggestions for the image prompts?\n\nDescribe visual details like clothing style, environment, era, colors, etc.\n\nOr send "none" to skip.`)
+      return
+    }
 
-      try {
-        // ── VISUAL STYLE ──
-        await bot.sendMessage(chatId, "🎨 Defining visual style...")
+    // If they send something else while waiting for ok/redo
+    await bot.sendMessage(chatId, `Send "ok" to continue or "redo" for a new script.`)
+    return
+  }
+
+  // ── STEP: User sends visual suggestions ──
+  if (state.step === "waiting_visual_suggestion") {
+    const visualSuggestion = /^none$/i.test(text) ? "" : text
+    const { input, topic, rawScript } = state
+    userState[chatId] = { step: "processing" }
+
+    try {
+      // ── VISUAL STYLE ──
+      await bot.sendMessage(chatId, "🎨 Defining visual style...")
         const style = await generateVisualStyle(topic, rawScript)
         await bot.sendMessage(chatId, `🎨 ${style.styleTag} | ${style.mood}`)
 
         // ── SCENES ──
         await bot.sendMessage(chatId, "🎬 Building scenes...")
-        const scenes = await buildScenes(rawScript, TOTAL_SCENES, style)
+        const scenes = await buildScenes(rawScript, TOTAL_SCENES, style, visualSuggestion)
         scenes.forEach((s, i) => {
           console.log(`Scene ${i + 1} prompt: ${s.imagePrompt.slice(0, 100)}...`)
         })
@@ -555,7 +569,7 @@ bot.on("message", async msg => {
             const voicePath = await generateVoice(s.script, i)
             const audioDuration = getDuration(voicePath)
             const img = await generateImage(s.imagePrompt, i, chatId)
-            await bot.sendMessage(chatId, `🖼 Image prompt used:\n\n${s.imagePrompt}`)
+            await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${IPHONE_STYLE_SUFFIX}`)
             await bot.sendDocument(chatId, img.path, { caption: "📸 Flux generated this (before Kling)" })
             await bot.sendMessage(chatId, `🎥 Generating video with Kling v2.6... this takes 2-4 min`)
             const vidPath = await generateVideo(img.url, img.path, s.motion, s.imagePrompt, i, chatId)
