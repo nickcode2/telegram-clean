@@ -437,114 +437,155 @@ bot.onText(/^do it$/i, msg => {
 // ─────────────────────────────────────────
 bot.on("message", async msg => {
   const chatId = msg.chat.id
-  if (!userState[chatId] || userState[chatId].step !== "waiting_input") return
-  if (/^do it$/i.test(msg.text) || /^stop$/i.test(msg.text)) return
+  const text = (msg.text || "").trim()
+  if (/^do it$/i.test(text) || /^stop$/i.test(text) || /^schema$/i.test(text)) return
 
-  const input = msg.text
-  userState[chatId].step = "processing"
+  const state = userState[chatId]
+  if (!state) return
 
-  try {
+  // ── STEP: User sends topic ──
+  if (state.step === "waiting_input") {
+    const input = text
+    userState[chatId] = { step: "generating_script", input }
 
-    // ── SCRIPT ──
-    await bot.sendMessage(chatId, `✍️ Writing script...`)
-    const rawScript = await generateScript(input)
-    const topic = input.startsWith("http") ? input.split("/").pop().replace(/_/g, " ") : input.slice(0, 60)
-    await bot.sendMessage(chatId, `📄 Script:\n\n${rawScript}`)
-
-    // ── VISUAL STYLE ──
-    await bot.sendMessage(chatId, "🎨 Defining visual style...")
-    const style = await generateVisualStyle(topic, rawScript)
-    await bot.sendMessage(chatId, `🎨 ${style.styleTag} | ${style.mood}`)
-
-    // ── SCENES ──
-    await bot.sendMessage(chatId, "🎬 Building scenes...")
-    const scenes = await buildScenes(rawScript, TOTAL_SCENES, style)
-    scenes.forEach((s, i) => {
-      console.log(`Scene ${i + 1} prompt: ${s.imagePrompt.slice(0, 100)}...`)
-    })
-    let plan = ""
-    scenes.forEach((s, i) => {
-      plan += `Scene ${i + 1}: ${s.cameraName}${i === 0 ? " 🔥" : ""}\n`
-    })
-    await bot.sendMessage(chatId, plan)
-
-    // ── GENERATE SCENES ──
-    const sceneResults = []
-
-    for (let i = 0; i < scenes.length; i++) {
-      if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Stopped."); userState[chatId] = {}; return }
-
-      const s = scenes[i]
-      const startTime = Date.now()
-
-      try {
-        await bot.sendMessage(chatId, `⏳ Scene ${i + 1}/${scenes.length}${i === 0 ? " [OPENING]" : ""} — ${s.cameraName}...`)
-        const voicePath = await generateVoice(s.script, i)
-        const audioDuration = getDuration(voicePath)
-        const img = await generateImage(s.imagePrompt, i, chatId)
-        await bot.sendMessage(chatId, `🖼 Image prompt used:\n\n${s.imagePrompt}`)
-        await bot.sendDocument(chatId, img.path, { caption: "📸 Flux generated this (before Kling)" })
-        await bot.sendMessage(chatId, `🎥 Generating video with Kling v2.6... this takes 2-4 min`)
-        const vidPath = await generateVideo(img.url, img.path, s.motion, s.imagePrompt, i, chatId)
-        const elapsed = Math.round((Date.now() - startTime) / 1000)
-        sceneResults.push({ videoPath: vidPath, voicePath, audioDuration })
-        await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Done in ${elapsed}s`)
-      } catch (err) {
-        if (err.message === "Stopped by user") { userState[chatId] = {}; return }
-        console.error(`Scene ${i + 1} failed:`, err.message)
-        await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} failed: ${err.message}\n→ Continuing...`)
-        sceneResults.push(null)
-      }
-    }
-
-    const validScenes = sceneResults.filter(s => s !== null)
-    if (validScenes.length === 0) throw new Error("All scenes failed")
-
-    // ── BUILD ──
-    await bot.sendMessage(chatId, `✂️ Building ${validScenes.length} scene(s)...`)
-    const scenePaths = []
-    let totalDuration = 0
-
-    for (let i = 0; i < validScenes.length; i++) {
-      try {
-        const { videoPath, voicePath, audioDuration } = validScenes[i]
-        totalDuration += audioDuration
-        scenePaths.push(buildScene(videoPath, voicePath, audioDuration, i))
-      } catch (e) {
-        console.error(`Build scene ${i + 1}:`, e.message)
-        await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} build failed — skipping`)
-      }
-    }
-
-    if (scenePaths.length === 0) throw new Error("No scenes built")
-
-    // ── JOIN ──
-    const joined = concatScenes(scenePaths)
-
-    // ── MUSIC ──
-    let finalVideo = joined
     try {
-      await bot.sendMessage(chatId, "🎵 Adding music...")
-      const musicPath = await downloadMusic()
-      finalVideo = addMusicHD(joined, musicPath, totalDuration)
-    } catch (e) {
-      console.error("Music failed:", e.message)
-      await bot.sendMessage(chatId, "⚠️ Music failed — delivering without it")
+      await bot.sendMessage(chatId, `✍️ Writing script...`)
+      const rawScript = await generateScript(input)
+      const topic = input.startsWith("http") ? input.split("/").pop().replace(/_/g, " ") : input.slice(0, 60)
+
+      userState[chatId] = { step: "waiting_script_approval", input, topic, rawScript }
+      await bot.sendMessage(chatId, `📄 Script:\n\n${rawScript}\n\n✅ Send "ok" to continue or 🔄 "redo" for a new script.`)
+    } catch (err) {
+      console.error("Script generation failed:", err)
+      await bot.sendMessage(chatId, `❌ Script failed: ${err.message}\n\nSend 'do it' to try again.`)
+      userState[chatId] = {}
+    }
+    return
+  }
+
+  // ── STEP: User approves or redoes script ──
+  if (state.step === "waiting_script_approval") {
+    if (/^redo$/i.test(text)) {
+      userState[chatId] = { step: "generating_script", input: state.input }
+      try {
+        await bot.sendMessage(chatId, `✍️ Rewriting script...`)
+        const rawScript = await generateScript(state.input)
+        userState[chatId] = { step: "waiting_script_approval", input: state.input, topic: state.topic, rawScript }
+        await bot.sendMessage(chatId, `📄 Script:\n\n${rawScript}\n\n✅ Send "ok" to continue or 🔄 "redo" for a new script.`)
+      } catch (err) {
+        console.error("Script redo failed:", err)
+        await bot.sendMessage(chatId, `❌ Script failed: ${err.message}\n\nSend 'do it' to try again.`)
+        userState[chatId] = {}
+      }
+      return
     }
 
-    // ── DELIVER ──
-    await bot.sendVideo(chatId, finalVideo, {
-      width: 1280,
-      height: 720,
-      caption: `🎬 ${scenePaths.length}-scene video (${totalDuration.toFixed(1)}s)\n🎤 Voice 100% | 🔊 SFX 15% | 🎵 Music 40%`
-    })
+    if (/^ok$/i.test(text)) {
+      const { input, topic, rawScript } = state
+      userState[chatId] = { step: "processing" }
 
-    await bot.sendMessage(chatId, "✅ Done! Send 'do it' for another.")
-    userState[chatId].step = "done"
+      try {
+        // ── VISUAL STYLE ──
+        await bot.sendMessage(chatId, "🎨 Defining visual style...")
+        const style = await generateVisualStyle(topic, rawScript)
+        await bot.sendMessage(chatId, `🎨 ${style.styleTag} | ${style.mood}`)
 
-  } catch (err) {
-    console.error("Fatal:", err)
-    await bot.sendMessage(chatId, `❌ Fatal: ${err.message}\n\nSend 'do it' to try again.`)
-    userState[chatId] = {}
+        // ── SCENES ──
+        await bot.sendMessage(chatId, "🎬 Building scenes...")
+        const scenes = await buildScenes(rawScript, TOTAL_SCENES, style)
+        scenes.forEach((s, i) => {
+          console.log(`Scene ${i + 1} prompt: ${s.imagePrompt.slice(0, 100)}...`)
+        })
+        let plan = ""
+        scenes.forEach((s, i) => {
+          plan += `Scene ${i + 1}: ${s.cameraName}${i === 0 ? " 🔥" : ""}\n`
+        })
+        await bot.sendMessage(chatId, plan)
+
+        // ── GENERATE SCENES ──
+        const sceneResults = []
+
+        for (let i = 0; i < scenes.length; i++) {
+          if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Stopped."); userState[chatId] = {}; return }
+
+          const s = scenes[i]
+          const startTime = Date.now()
+
+          try {
+            await bot.sendMessage(chatId, `⏳ Scene ${i + 1}/${scenes.length}${i === 0 ? " [OPENING]" : ""} — ${s.cameraName}...`)
+            const voicePath = await generateVoice(s.script, i)
+            const audioDuration = getDuration(voicePath)
+            const img = await generateImage(s.imagePrompt, i, chatId)
+            await bot.sendMessage(chatId, `🖼 Image prompt used:\n\n${s.imagePrompt}`)
+            await bot.sendDocument(chatId, img.path, { caption: "📸 Flux generated this (before Kling)" })
+            await bot.sendMessage(chatId, `🎥 Generating video with Kling v2.6... this takes 2-4 min`)
+            const vidPath = await generateVideo(img.url, img.path, s.motion, s.imagePrompt, i, chatId)
+            const elapsed = Math.round((Date.now() - startTime) / 1000)
+            sceneResults.push({ videoPath: vidPath, voicePath, audioDuration })
+            await bot.sendMessage(chatId, `✅ Scene ${i + 1}: Done in ${elapsed}s`)
+          } catch (err) {
+            if (err.message === "Stopped by user") { userState[chatId] = {}; return }
+            console.error(`Scene ${i + 1} failed:`, err.message)
+            await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} failed: ${err.message}\n→ Continuing...`)
+            sceneResults.push(null)
+          }
+        }
+
+        const validScenes = sceneResults.filter(s => s !== null)
+        if (validScenes.length === 0) throw new Error("All scenes failed")
+
+        // ── BUILD ──
+        await bot.sendMessage(chatId, `✂️ Building ${validScenes.length} scene(s)...`)
+        const scenePaths = []
+        let totalDuration = 0
+
+        for (let i = 0; i < validScenes.length; i++) {
+          try {
+            const { videoPath, voicePath, audioDuration } = validScenes[i]
+            totalDuration += audioDuration
+            scenePaths.push(buildScene(videoPath, voicePath, audioDuration, i))
+          } catch (e) {
+            console.error(`Build scene ${i + 1}:`, e.message)
+            await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} build failed — skipping`)
+          }
+        }
+
+        if (scenePaths.length === 0) throw new Error("No scenes built")
+
+        // ── JOIN ──
+        const joined = concatScenes(scenePaths)
+
+        // ── MUSIC ──
+        let finalVideo = joined
+        try {
+          await bot.sendMessage(chatId, "🎵 Adding music...")
+          const musicPath = await downloadMusic()
+          finalVideo = addMusicHD(joined, musicPath, totalDuration)
+        } catch (e) {
+          console.error("Music failed:", e.message)
+          await bot.sendMessage(chatId, "⚠️ Music failed — delivering without it")
+        }
+
+        // ── DELIVER ──
+        await bot.sendVideo(chatId, finalVideo, {
+          width: 1280,
+          height: 720,
+          caption: `🎬 ${scenePaths.length}-scene video (${totalDuration.toFixed(1)}s)\n🎤 Voice 100% | 🔊 SFX 15% | 🎵 Music 40%`
+        })
+
+        await bot.sendMessage(chatId, "✅ Done! Send 'do it' for another.")
+        userState[chatId].step = "done"
+
+      } catch (err) {
+        console.error("Fatal:", err)
+        await bot.sendMessage(chatId, `❌ Fatal: ${err.message}\n\nSend 'do it' to try again.`)
+        userState[chatId] = {}
+      }
+      return
+    }
+
+    // If they send something else while waiting for ok/redo
+    await bot.sendMessage(chatId, `Send "ok" to continue or "redo" for a new script.`)
+    return
   }
 })
