@@ -382,16 +382,39 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
     console.log(`Video ${index + 1} raw: ${w}x${h} (ratio: ${ratio.toFixed(2)}) — ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
 
     if (ratio < 1.6 || ratio > 1.9) {
-      // NOT 16:9 — force crop and scale to 1280x720
-      console.log(`Video ${index + 1}: WRONG RATIO ${ratio.toFixed(2)}, forcing 16:9 crop`)
-      execSync(`ffmpeg -y -i "${rawPath}" -vf "crop=ih*16/9:ih,scale=1280:720,setsar=1" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${path}"`)
+      // NOT 16:9 — calculate correct crop
+      // For square or portrait: keep full width, crop height from center
+      // For too-wide: keep full height, crop width from center
+      const targetRatio = 16 / 9
+      let cropW, cropH
+      if (ratio < targetRatio) {
+        // Too tall (square or portrait) — keep width, reduce height
+        cropW = w
+        cropH = Math.round(w / targetRatio)
+      } else {
+        // Too wide — keep height, reduce width
+        cropH = h
+        cropW = Math.round(h * targetRatio)
+      }
+      // Make even numbers for codec compatibility
+      cropW = cropW - (cropW % 2)
+      cropH = cropH - (cropH % 2)
+      console.log(`Video ${index + 1}: WRONG RATIO ${ratio.toFixed(2)}, cropping to ${cropW}x${cropH} then scaling to 1280x720`)
+      execSync(`ffmpeg -y -i "${rawPath}" -vf "crop=${cropW}:${cropH},scale=1280:720,setsar=1" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${path}"`)
     } else {
       // Already 16:9 — just copy
       fs.copyFileSync(rawPath, path)
     }
   } catch (e) {
-    console.log(`Video ${index + 1}: could not check dims, using raw`)
-    fs.copyFileSync(rawPath, path)
+    console.error(`Video ${index + 1}: crop/check failed:`, e.message)
+    // Fallback: force scale to 1280x720 with padding
+    try {
+      execSync(`ffmpeg -y -i "${rawPath}" -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${path}"`)
+      console.log(`Video ${index + 1}: fallback scale+pad to 1280x720`)
+    } catch {
+      console.log(`Video ${index + 1}: all resizing failed, using raw`)
+      fs.copyFileSync(rawPath, path)
+    }
   }
 
   return path
