@@ -699,7 +699,7 @@ bot.on("message", async msg => {
     }
 
     // Handle "redo 2" or "redo 1,3"
-    const redoMatch = text.match(/^redo\s+([\d,\s]+)$/i)
+    const redoMatch = text.match(/^redo\s+([\d,\s]+)/i)
     if (redoMatch) {
       const indices = redoMatch[1].split(/[,\s]+/).map(n => parseInt(n) - 1).filter(n => n >= 0 && n < scenes.length)
       if (indices.length === 0) {
@@ -794,8 +794,8 @@ bot.on("message", async msg => {
       return
     }
 
-    // Handle "redo 2" or "redo 1,3" for videos
-    const redoMatch = text.match(/^redo\s+([\d,\s]+)$/i)
+    // Handle "redo 2" or "redo 1,3" or "redo 3, make it better" etc
+    const redoMatch = text.match(/^redo\s+([\d,\s]+)/i)
     if (redoMatch) {
       const indices = redoMatch[1].split(/[,\s]+/).map(n => parseInt(n) - 1).filter(n => n >= 0 && n < scenes.length)
       if (indices.length === 0) {
