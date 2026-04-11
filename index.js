@@ -441,17 +441,36 @@ Write ONLY the image description, nothing else.`,
 
 
 // ─────────────────────────────────────────
+// SPLIT TEXT INTO SENTENCES
+// ─────────────────────────────────────────
+function splitIntoSentences(text) {
+  // Split on sentence-ending punctuation followed by space or end
+  const raw = text.match(/[^.!?]*[.!?]+[\s]*/g) || [text]
+  return raw.map(s => s.trim()).filter(s => s.length > 0)
+}
+
+
+// ─────────────────────────────────────────
 // SPLIT SCRIPT INTO CHUNKS
 // Each chunk = ~1 minute of narration (~150 words)
+// Groups complete sentences, never breaks mid-sentence
 // ─────────────────────────────────────────
 function splitScriptIntoChunks(script) {
-  const words = script.split(/\s+/)
-  const wordsPerChunk = SCENES_PER_CHUNK * WORDS_PER_SCENE // 12 × 12 = 144 words per chunk
+  const sentences = splitIntoSentences(script)
+  const wordsPerChunk = SCENES_PER_CHUNK * WORDS_PER_SCENE // ~144 words per chunk
   const chunks = []
+  let current = ""
 
-  for (let i = 0; i < words.length; i += wordsPerChunk) {
-    chunks.push(words.slice(i, i + wordsPerChunk).join(" "))
+  for (const sentence of sentences) {
+    const combined = current ? current + " " + sentence : sentence
+    if (countWords(combined) > wordsPerChunk && current) {
+      chunks.push(current.trim())
+      current = sentence
+    } else {
+      current = combined
+    }
   }
+  if (current.trim()) chunks.push(current.trim())
 
   // If last chunk is too short (< 50 words), merge with previous
   if (chunks.length > 1 && countWords(chunks[chunks.length - 1]) < 50) {
@@ -465,14 +484,51 @@ function splitScriptIntoChunks(script) {
 
 // ─────────────────────────────────────────
 // SPLIT CHUNK INTO SCENES
+// Groups complete sentences to ~12 words each
+// Never breaks mid-sentence
 // ─────────────────────────────────────────
 function splitChunkIntoScenes(chunkText) {
-  const words = chunkText.split(/\s+/)
+  const sentences = splitIntoSentences(chunkText)
   const scenes = []
-  for (let i = 0; i < words.length; i += WORDS_PER_SCENE) {
-    const sceneWords = words.slice(i, i + WORDS_PER_SCENE).join(" ")
-    if (sceneWords.trim()) scenes.push(sceneWords)
+  let current = ""
+
+  for (const sentence of sentences) {
+    const combined = current ? current + " " + sentence : sentence
+
+    // Check if combined is too long
+    if (countWords(combined) > WORDS_PER_SCENE + 4) {
+      // Push current if we have any
+      if (current) scenes.push(current.trim())
+
+      // If this sentence alone is too long, split at commas
+      if (countWords(sentence) > WORDS_PER_SCENE + 4) {
+        const parts = sentence.split(/,\s*/)
+        let sub = ""
+        for (const part of parts) {
+          const subCombined = sub ? sub + ", " + part : part
+          if (countWords(subCombined) > WORDS_PER_SCENE + 4 && sub) {
+            scenes.push(sub.trim())
+            sub = part
+          } else {
+            sub = subCombined
+          }
+        }
+        current = sub
+      } else {
+        current = sentence
+      }
+    } else {
+      current = combined
+    }
   }
+  if (current.trim()) scenes.push(current.trim())
+
+  // If last scene is too short (< 4 words), merge with previous
+  if (scenes.length > 1 && countWords(scenes[scenes.length - 1]) < 4) {
+    const last = scenes.pop()
+    scenes[scenes.length - 1] += " " + last
+  }
+
   return scenes
 }
 
