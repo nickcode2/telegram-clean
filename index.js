@@ -281,8 +281,6 @@ Keep the SAME: clothing style, architecture style, technology level, color palet
 // REALISM STYLE — appended to every image prompt
 // ─────────────────────────────────────────
 const REALISM_STYLE_SUFFIX = `
-Captured on a real handheld camera, documentary style photograph. Natural imperfections only. Slight motion blur from subtle hand movement, imperfect focus, mild exposure imbalance. Real-world lighting behavior with no enhancement or stylization. Highlights may clip slightly, shadows retain noise and detail loss. Colors are uneven and influenced by environment, no grading or cinematic tone.
-Lens characteristics are natural and imperfect. Subtle distortion, light falloff toward edges, minor chromatic aberration on high contrast areas. Depth of field is realistic and slightly inconsistent, not artificially sharp everywhere.
 Surfaces show natural real-world variation: some areas are clean and maintained, others show light wear such as small scratches, minor stains, and subtle dirt buildup. Materials have realistic imperfections without looking abandoned or damaged: modern structures appear functional and in use, with slight irregularities in texture and color. Ground and surroundings feel naturally used: faint tire marks, occasional debris, small inconsistencies, but not dirty or neglected. Textures are varied and non-uniform without repetition, balancing clean areas with mild wear. Environment feels actively used and maintained, not abandoned, not ruined, not post-apocalyptic.
 Overall image should feel accidental and observational, like a real moment captured quickly, not staged, not designed, not rendered. It must feel physically believable and grounded in reality.`
 
