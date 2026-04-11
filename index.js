@@ -122,36 +122,64 @@ function getRandomFacePhoto() {
 async function generateLipSync(faceImagePath, voicePath, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  // Convert face image to base64 data URI
+  // STEP 1: Generate a base video from the face photo using Kling v2.6
+  // The person should be still with subtle natural movement
   const imgBuf = fs.readFileSync(faceImagePath)
   const imgBase64 = `data:image/png;base64,${imgBuf.toString("base64")}`
 
-  // Convert voice to base64 data URI
-  const audioBuf = fs.readFileSync(voicePath)
-  const audioBase64 = `data:audio/mpeg;base64,${audioBuf.toString("base64")}`
-
-  console.log(`LipSync ${index + 1}: sending to Kling Lip Sync`)
-  const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-lip-sync/predictions", {
+  console.log(`LipSync ${index + 1}: Step 1 — generating base video from face`)
+  const baseRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       input: {
-        face: imgBase64,
-        audio: audioBase64
+        start_image: imgBase64,
+        prompt: "person looking directly at camera, very subtle natural head movement, slight breathing motion, neutral expression ready to speak, camera slowly zooms in slightly",
+        duration: 5,
+        aspect_ratio: "16:9",
+        generate_audio: false
       }
     })
   })
-  const pred = await res.json()
-  console.log("Kling LipSync response:", JSON.stringify(pred).slice(0, 300))
-  if (!pred.id) throw new Error(`LipSync failed to start: ${pred.detail || JSON.stringify(pred)}`)
+  const basePred = await baseRes.json()
+  if (!basePred.id) throw new Error(`LipSync base video failed: ${basePred.detail || JSON.stringify(basePred)}`)
 
-  const result = await withTimeout(pollReplicate(pred.id, `LipSync ${index + 1}`, chatId), `LipSync ${index + 1}`)
-  const url = Array.isArray(result.output) ? result.output[0] : result.output
-  const buf = await (await fetch(url)).buffer()
+  const baseResult = await withTimeout(pollReplicate(basePred.id, `LipSync base ${index + 1}`, chatId), `LipSync base ${index + 1}`)
+  const baseVideoUrl = Array.isArray(baseResult.output) ? baseResult.output[0] : baseResult.output
+
+  // Save base video locally
+  const baseBuf = await (await fetch(baseVideoUrl)).buffer()
+  const baseVideoPath = `/tmp/videos/lipsync_base_${index}.mp4`
+  fs.writeFileSync(baseVideoPath, baseBuf)
+  console.log(`LipSync ${index + 1}: base video ready (${(baseBuf.length / 1024 / 1024).toFixed(1)}MB)`)
+
+  // STEP 2: Apply lip sync using Kling Lip Sync
+  // Upload voice audio as data URI
+  const audioBuf = fs.readFileSync(voicePath)
+  const audioBase64 = `data:audio/mpeg;base64,${audioBuf.toString("base64")}`
+
+  console.log(`LipSync ${index + 1}: Step 2 — applying lip sync`)
+  const lipRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-lip-sync/predictions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: {
+        video_url: baseVideoUrl,
+        audio_file: audioBase64
+      }
+    })
+  })
+  const lipPred = await lipRes.json()
+  console.log("Kling LipSync response:", JSON.stringify(lipPred).slice(0, 300))
+  if (!lipPred.id) throw new Error(`LipSync failed to start: ${lipPred.detail || JSON.stringify(lipPred)}`)
+
+  const lipResult = await withTimeout(pollReplicate(lipPred.id, `LipSync ${index + 1}`, chatId), `LipSync ${index + 1}`)
+  const lipUrl = Array.isArray(lipResult.output) ? lipResult.output[0] : lipResult.output
+  const lipBuf = await (await fetch(lipUrl)).buffer()
   const rawPath = `/tmp/videos/lipsync_${index}_raw.mp4`
-  fs.writeFileSync(rawPath, buf)
+  fs.writeFileSync(rawPath, lipBuf)
 
-  // Add slight zoom in effect
+  // Add slight zoom in effect and normalize to 1280x720
   const path = `/tmp/videos/lipsync_${index}.mp4`
   execSync(
     `ffmpeg -y -i "${rawPath}" -vf "scale=1280:720,zoompan=z='min(zoom+0.0008,1.04)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=150:s=1280x720:fps=30" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 "${path}"`
