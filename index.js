@@ -240,7 +240,7 @@ Be specific and cinematic.
 Camera angle: ${angle.prompt}.
 Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`,
       `Script: "${script}"`,
-      200
+      400
     )
 
     scenes.push({
@@ -260,11 +260,10 @@ Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosph
 // REALISM STYLE — appended to every image prompt
 // ─────────────────────────────────────────
 const REALISM_STYLE_SUFFIX = `
-RAW photograph. Real camera, real sensor, real lens. This must look like an actual photo — not CGI, not a render, not concept art, not illustration, not 3D, not digital art, not a painting, not a movie still, not a video game screenshot, not AI-generated looking.
-Real camera artifacts: natural sensor noise and film grain, subtle chromatic aberration at edges, natural lens vignetting, color fringing on high-contrast edges. Imperfect auto white balance.
-Real physical textures: concrete has cracks and water stains, metal has rust and scratches, fabric has loose threads and wrinkles, skin has pores and blemishes, hair has flyaways, surfaces have dust and wear. Nothing looks new or perfect or clean.
-Available light only — whatever light source exists in the scene must behave like real light. No stylized color grading. No cinematic contrast. Slightly blown highlights in bright areas. Visible noise in shadows. Natural color cast from environment.
-Photo feels like someone was actually there and took this picture.`
+Captured on a real handheld camera, documentary style photograph. Natural imperfections only. Slight motion blur from subtle hand movement, imperfect focus, mild exposure imbalance. Real-world lighting behavior with no enhancement or stylization. Highlights may clip slightly, shadows retain noise and detail loss. Colors are uneven and influenced by environment, no grading or cinematic tone.
+Lens characteristics are natural and imperfect. Subtle distortion, light falloff toward edges, minor chromatic aberration on high contrast areas. Depth of field is realistic and slightly inconsistent, not artificially sharp everywhere.
+Surfaces show real wear and age. Materials are imperfect and varied, with irregular textures, dust buildup, scratches, stains, and subtle damage. Nothing appears clean, polished, or idealized.
+Overall image should feel accidental and observational, like a real moment captured quickly, not staged, not designed, not rendered. It must feel physically believable and grounded in reality.`
 
 
 // ─────────────────────────────────────────
@@ -291,8 +290,8 @@ async function generateImage(prompt, index, chatId) {
     })
   })
   const pred = await res.json()
-  console.log(`Flux prediction created:`, JSON.stringify(pred).slice(0, 300))
-  if (!pred.id) throw new Error("Image failed to start — check REPLICATE_API_TOKEN")
+  console.log(`Flux prediction created:`, JSON.stringify(pred).slice(0, 500))
+  if (!pred.id) throw new Error(`Image failed to start: ${pred.detail || pred.error?.message || JSON.stringify(pred).slice(0, 200)}`)
 
   const result = await withTimeout(pollReplicate(pred.id, `Image ${index + 1}`, chatId), `Image ${index + 1}`)
   const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
