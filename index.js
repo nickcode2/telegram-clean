@@ -128,8 +128,8 @@ async function generateScript(input) {
     } catch { context = `Topic: ${input}` }
   }
 
-  // ElevenLabs speaks ~2.5 words per second — 10 words = ~4 seconds, safe for 5sec scene
-  const wordsPerScene = TARGET_SCENE_SECONDS <= 2 ? 6 : 10
+  // ElevenLabs speaks ~2.5 words per second — 12 words = ~4.8 seconds, with voice delay fills 5sec scene
+  const wordsPerScene = TARGET_SCENE_SECONDS <= 2 ? 6 : 12
 
   return await callClaude(
     `Write a YouTube voiceover script with ${TOTAL_SCENES} scene(s) of ~${TARGET_SCENE_SECONDS} seconds each.
@@ -372,19 +372,35 @@ function normalizeSize(input, output) {
   )
 }
 
+function getVoiceDelay(sceneIndex) {
+  // Scene 0: 0.5s, every 3rd scene (3, 6, 9...): 2s, all others: 1s
+  if (sceneIndex === 0) return 0.5
+  if (sceneIndex % 3 === 0) return 2.0
+  return 1.0
+}
+
 function buildScene(vidPath, voicePath, dur, i) {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
+
+  // Always use TARGET_SCENE_SECONDS (5s) as scene length, not voice duration
+  const sceneDuration = Math.max(TARGET_SCENE_SECONDS, dur + getVoiceDelay(i))
   const trimmed = `/tmp/videos/trimmed_${i}.mp4`
-  execSync(`ffmpeg -y -i "${norm}" -t ${dur} -c:v copy -c:a copy "${trimmed}"`)
+  execSync(`ffmpeg -y -i "${norm}" -t ${sceneDuration} -c:v copy -c:a copy "${trimmed}"`)
+
+  // Add silence before voice for breathing room
+  const delay = getVoiceDelay(i)
+  const delayedVoice = `/tmp/voices/delayed_${i}.mp3`
+  execSync(`ffmpeg -y -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -i "${voicePath}" -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
+
   const out = `/tmp/final/scene_${i}.mp4`
   if (hasAudio(trimmed)) {
     const sfxVol = detectVocalContent(trimmed) ? 0.10 : 0.15
     execSync(
-      `ffmpeg -y -i "${trimmed}" -i "${voicePath}" -filter_complex "[0:a]volume=${sfxVol}[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+      `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -filter_complex "[0:a]volume=${sfxVol}[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
     )
   } else {
-    execSync(`ffmpeg -y -i "${trimmed}" -i "${voicePath}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
+    execSync(`ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
   }
   return out
 }
@@ -542,7 +558,8 @@ bot.on("message", async msg => {
         for (let i = 0; i < validScenes.length; i++) {
           try {
             const { videoPath, voicePath, audioDuration } = validScenes[i]
-            totalDuration += audioDuration
+            const sceneDur = Math.max(TARGET_SCENE_SECONDS, audioDuration + getVoiceDelay(i))
+            totalDuration += sceneDur
             scenePaths.push(buildScene(videoPath, voicePath, audioDuration, i))
           } catch (e) {
             console.error(`Build scene ${i + 1}:`, e.message)
