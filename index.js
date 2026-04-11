@@ -226,26 +226,47 @@ async function buildScenes(rawScript, totalScenes, style, visualSuggestion = "")
 
   const userVisualNote = visualSuggestion ? `\nUser's visual direction: ${visualSuggestion}` : ""
   const scenes = []
+  let referencePrompt = "" // Scene 1's prompt becomes the visual reference
 
   for (let i = 0; i < totalScenes; i++) {
     const script = texts[i] || rawScript.replace(/\*?\*?\[SCENE \d+\]\*?\*?/, "").trim()
     const camera = i === 0 ? OPENING_CAMERA : getCam(i)
     const angle = i === 0 ? OPENING_ANGLE : getAngle(i)
 
-    // Simple: read the script, describe what it looks like in 100 words
-    const imagePrompt = await callClaude(
-      `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
+    let systemPrompt
+    if (i === 0) {
+      // Scene 1: establish the visual world
+      systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
+Describe: the location, environment, objects, sky, light, time of day, colors, atmosphere.
+Also establish: clothing style, architecture style, technology level, color palette of the world.
+Be specific and cinematic.
+Camera angle: ${angle.prompt}.
+Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`
+    } else {
+      // Subsequent scenes: MUST follow scene 1's visual world
+      systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
 Describe: the location, environment, objects, sky, light, time of day, colors, atmosphere.
 Be specific and cinematic.
 Camera angle: ${angle.prompt}.
-Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`,
+Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}
+
+CRITICAL — VISUAL CONSISTENCY: This scene MUST match the same visual world as this reference scene:
+"${referencePrompt}"
+Keep the SAME: clothing style, architecture style, technology level, color palette, material textures, time period, and overall aesthetic. Characters wear the same type of clothing. Buildings follow the same architecture. The world looks like the same place.`
+    }
+
+    const imagePrompt = await callClaude(
+      systemPrompt,
       `Script: "${script}"`,
       400
     )
 
+    const trimmedPrompt = imagePrompt.trim()
+    if (i === 0) referencePrompt = trimmedPrompt
+
     scenes.push({
       script,
-      imagePrompt: imagePrompt.trim(),
+      imagePrompt: trimmedPrompt,
       motion: camera.motion,
       cameraName: camera.name,
       angleName: angle.name
@@ -262,7 +283,7 @@ Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosph
 const REALISM_STYLE_SUFFIX = `
 Captured on a real handheld camera, documentary style photograph. Natural imperfections only. Slight motion blur from subtle hand movement, imperfect focus, mild exposure imbalance. Real-world lighting behavior with no enhancement or stylization. Highlights may clip slightly, shadows retain noise and detail loss. Colors are uneven and influenced by environment, no grading or cinematic tone.
 Lens characteristics are natural and imperfect. Subtle distortion, light falloff toward edges, minor chromatic aberration on high contrast areas. Depth of field is realistic and slightly inconsistent, not artificially sharp everywhere.
-Surfaces show real wear and age. Materials are imperfect and varied, with irregular textures, dust buildup, scratches, stains, and subtle damage. Nothing appears clean, polished, or idealized.
+Surfaces show natural real-world variation: some areas are clean and maintained, others show light wear such as small scratches, minor stains, and subtle dirt buildup. Materials have realistic imperfections without looking abandoned or damaged: modern structures appear functional and in use, with slight irregularities in texture and color. Ground and surroundings feel naturally used: faint tire marks, occasional debris, small inconsistencies, but not dirty or neglected. Textures are varied and non-uniform without repetition, balancing clean areas with mild wear. Environment feels actively used and maintained, not abandoned, not ruined, not post-apocalyptic.
 Overall image should feel accidental and observational, like a real moment captured quickly, not staged, not designed, not rendered. It must feel physically believable and grounded in reality.`
 
 
@@ -547,7 +568,7 @@ function buildScene(vidPath, voicePath, dur, i) {
 
     const sfxVol = detectVocalContent(norm) ? 0.10 : 0.15
     execSync(
-      `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -i "${klingAudio}" -filter_complex "[2:a]volume=${sfxVol}[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+      `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -i "${klingAudio}" -filter_complex "[2:a]volume=${sfxVol},afade=t=in:st=0:d=1,afade=t=out:st=3:d=2[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
     )
   } else {
     execSync(`ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
