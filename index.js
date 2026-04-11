@@ -119,15 +119,30 @@ function getRandomFacePhoto() {
 // ─────────────────────────────────────────
 // KLING LIP SYNC
 // ─────────────────────────────────────────
+async function uploadToReplicate(filePath, contentType) {
+  const fileData = fs.readFileSync(filePath)
+  const res = await fetch("https://api.replicate.com/v1/files", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${REPLICATE_TOKEN}`,
+      "Content-Type": contentType,
+      "X-Filename": filePath.split("/").pop()
+    },
+    body: fileData
+  })
+  const data = await res.json()
+  if (!data.urls?.get) throw new Error(`File upload failed: ${JSON.stringify(data).slice(0, 200)}`)
+  console.log(`Uploaded ${filePath.split("/").pop()} → ${data.urls.get}`)
+  return data.urls.get
+}
+
 async function generateLipSync(faceImagePath, voicePath, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  // OmniHuman takes image + audio directly — one step
-  const imgBuf = fs.readFileSync(faceImagePath)
-  const imgBase64 = `data:image/png;base64,${imgBuf.toString("base64")}`
-
-  const audioBuf = fs.readFileSync(voicePath)
-  const audioBase64 = `data:audio/mpeg;base64,${audioBuf.toString("base64")}`
+  // Upload both files to Replicate's file hosting
+  console.log(`LipSync ${index + 1}: uploading image and audio to Replicate...`)
+  const imageUrl = await uploadToReplicate(faceImagePath, "image/png")
+  const audioUrl = await uploadToReplicate(voicePath, "audio/mpeg")
 
   console.log(`LipSync ${index + 1}: sending to OmniHuman`)
   const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human/predictions", {
@@ -135,8 +150,8 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       input: {
-        image: imgBase64,
-        audio: audioBase64
+        image: imageUrl,
+        audio: audioUrl
       }
     })
   })
