@@ -53,6 +53,31 @@ const getCam = i => CAMERA_TECHNIQUES[i % CAMERA_TECHNIQUES.length]
 
 
 // ─────────────────────────────────────────
+// 15 IMAGE ANGLES (for Flux image generation)
+// ─────────────────────────────────────────
+const IMAGE_ANGLES = [
+  { name: "Eye Level",          prompt: "shot from eye level, natural human perspective" },
+  { name: "Low Angle",          prompt: "shot from a low angle looking up, subject appears powerful and imposing" },
+  { name: "High Angle",         prompt: "shot from a high angle looking down at the subject" },
+  { name: "Bird's Eye",         prompt: "shot from directly overhead, top-down bird's eye view" },
+  { name: "Worm's Eye",         prompt: "extreme low angle from ground level looking straight up" },
+  { name: "Dutch Angle",        prompt: "shot at a tilted diagonal angle, creating tension" },
+  { name: "Over the Shoulder",  prompt: "shot from over someone's shoulder looking at the scene" },
+  { name: "Wide Establishing",  prompt: "wide establishing shot showing the full environment from a distance" },
+  { name: "Close-Up",           prompt: "tight close-up shot filling the frame with the main subject" },
+  { name: "Extreme Close-Up",   prompt: "extreme close-up on a single detail like eyes, hands, or texture" },
+  { name: "Three-Quarter",      prompt: "shot from a 45-degree angle to the side of the subject" },
+  { name: "Profile",            prompt: "side profile view, subject facing sideways at 90 degrees" },
+  { name: "POV First Person",   prompt: "first-person point of view, as if seen through someone's own eyes" },
+  { name: "Rear View",          prompt: "shot from behind the subject, looking at what they see ahead" },
+  { name: "Foreground Framing", prompt: "shot through a foreground element like a doorway or window, subject in background" }
+]
+
+const OPENING_ANGLE = IMAGE_ANGLES.find(a => a.name === "Wide Establishing")
+const getAngle = i => IMAGE_ANGLES[i % IMAGE_ANGLES.length]
+
+
+// ─────────────────────────────────────────
 // STOP COMMAND
 // ─────────────────────────────────────────
 bot.onText(/^stop$/i, async msg => {
@@ -205,12 +230,14 @@ async function buildScenes(rawScript, totalScenes, style, visualSuggestion = "")
   for (let i = 0; i < totalScenes; i++) {
     const script = texts[i] || rawScript.replace(/\*?\*?\[SCENE \d+\]\*?\*?/, "").trim()
     const camera = i === 0 ? OPENING_CAMERA : getCam(i)
+    const angle = i === 0 ? OPENING_ANGLE : getAngle(i)
 
     // Simple: read the script, describe what it looks like in 100 words
     const imagePrompt = await callClaude(
       `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
 Describe: the location, environment, objects, sky, light, time of day, colors, atmosphere.
 Be specific and cinematic.
+Camera angle: ${angle.prompt}.
 Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`,
       `Script: "${script}"`,
       200
@@ -220,7 +247,8 @@ Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosph
       script,
       imagePrompt: imagePrompt.trim(),
       motion: camera.motion,
-      cameraName: camera.name
+      cameraName: camera.name,
+      angleName: angle.name
     })
   }
 
@@ -551,7 +579,7 @@ bot.on("message", async msg => {
       })
       let plan = ""
       scenes.forEach((s, i) => {
-        plan += `Scene ${i + 1}: ${s.cameraName}${i === 0 ? " 🔥" : ""}\n`
+        plan += `Scene ${i + 1}: ${s.cameraName} | 📐 ${s.angleName}${i === 0 ? " 🔥" : ""}\n`
       })
       await bot.sendMessage(chatId, plan)
 
@@ -625,6 +653,9 @@ bot.on("message", async msg => {
         width: 1280,
         height: 720,
         caption: `🎬 ${scenePaths.length}-scene video (${totalDuration.toFixed(1)}s)\n🎤 Voice 100% | 🔊 SFX 15% | 🎵 Music 40%`
+      })
+      await bot.sendDocument(chatId, finalVideo, {
+        caption: `📁 HD file (YouTube-ready) — no Telegram compression`
       })
 
       await bot.sendMessage(chatId, "✅ Done! Send 'do it' for another.")
