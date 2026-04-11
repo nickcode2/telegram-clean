@@ -122,62 +122,34 @@ function getRandomFacePhoto() {
 async function generateLipSync(faceImagePath, voicePath, index, chatId) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  // STEP 1: Generate a base video from the face photo using Kling v2.6
-  // The person should be still with subtle natural movement
+  // OmniHuman takes image + audio directly — one step
   const imgBuf = fs.readFileSync(faceImagePath)
   const imgBase64 = `data:image/png;base64,${imgBuf.toString("base64")}`
 
-  console.log(`LipSync ${index + 1}: Step 1 — generating base video from face`)
-  const baseRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      input: {
-        start_image: imgBase64,
-        prompt: "person looking directly at camera, very subtle natural head movement, slight breathing motion, neutral expression ready to speak, camera slowly zooms in slightly",
-        duration: 5,
-        aspect_ratio: "16:9",
-        generate_audio: false
-      }
-    })
-  })
-  const basePred = await baseRes.json()
-  if (!basePred.id) throw new Error(`LipSync base video failed: ${basePred.detail || JSON.stringify(basePred)}`)
-
-  const baseResult = await withTimeout(pollReplicate(basePred.id, `LipSync base ${index + 1}`, chatId), `LipSync base ${index + 1}`)
-  const baseVideoUrl = Array.isArray(baseResult.output) ? baseResult.output[0] : baseResult.output
-
-  // Save base video locally
-  const baseBuf = await (await fetch(baseVideoUrl)).buffer()
-  const baseVideoPath = `/tmp/videos/lipsync_base_${index}.mp4`
-  fs.writeFileSync(baseVideoPath, baseBuf)
-  console.log(`LipSync ${index + 1}: base video ready (${(baseBuf.length / 1024 / 1024).toFixed(1)}MB)`)
-
-  // STEP 2: Apply lip sync using Kling Lip Sync
-  // Upload voice audio as data URI
   const audioBuf = fs.readFileSync(voicePath)
   const audioBase64 = `data:audio/mpeg;base64,${audioBuf.toString("base64")}`
 
-  console.log(`LipSync ${index + 1}: Step 2 — applying lip sync`)
-  const lipRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-lip-sync/predictions", {
+  console.log(`LipSync ${index + 1}: sending to OmniHuman`)
+  const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       input: {
-        video_url: baseVideoUrl,
-        audio_file: audioBase64
+        image_path: imgBase64,
+        audio_path: audioBase64,
+        resolution: 720
       }
     })
   })
-  const lipPred = await lipRes.json()
-  console.log("Kling LipSync response:", JSON.stringify(lipPred).slice(0, 300))
-  if (!lipPred.id) throw new Error(`LipSync failed to start: ${lipPred.detail || JSON.stringify(lipPred)}`)
+  const pred = await res.json()
+  console.log("OmniHuman response:", JSON.stringify(pred).slice(0, 300))
+  if (!pred.id) throw new Error(`LipSync failed to start: ${pred.detail || JSON.stringify(pred)}`)
 
-  const lipResult = await withTimeout(pollReplicate(lipPred.id, `LipSync ${index + 1}`, chatId), `LipSync ${index + 1}`)
-  const lipUrl = Array.isArray(lipResult.output) ? lipResult.output[0] : lipResult.output
-  const lipBuf = await (await fetch(lipUrl)).buffer()
+  const result = await withTimeout(pollReplicate(pred.id, `LipSync ${index + 1}`, chatId), `LipSync ${index + 1}`)
+  const url = Array.isArray(result.output) ? result.output[0] : result.output
+  const buf = await (await fetch(url)).buffer()
   const rawPath = `/tmp/videos/lipsync_${index}_raw.mp4`
-  fs.writeFileSync(rawPath, lipBuf)
+  fs.writeFileSync(rawPath, buf)
 
   // Add slight zoom in effect and normalize to 1280x720
   const path = `/tmp/videos/lipsync_${index}.mp4`
@@ -201,12 +173,12 @@ bot.onText(/^test lipsync$/i, msg => {
 
 bot.onText(/^lipsync schema$/i, async msg => {
   try {
-    const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-lip-sync", {
+    const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human", {
       headers: { Authorization: `Bearer ${REPLICATE_TOKEN}` }
     })
     const data = await res.json()
     const schema = JSON.stringify(data?.latest_version?.openapi_schema?.components?.schemas?.Input?.properties || data, null, 2).slice(0, 3000)
-    await bot.sendMessage(msg.chat.id, `Kling Lip Sync schema:\n\n${schema}`)
+    await bot.sendMessage(msg.chat.id, `OmniHuman schema:\n\n${schema}`)
   } catch (e) {
     await bot.sendMessage(msg.chat.id, `Error: ${e.message}`)
   }
