@@ -132,12 +132,22 @@ async function generateScript(input) {
   const wordsPerScene = TARGET_SCENE_SECONDS <= 2 ? 6 : 12
 
   return await callClaude(
-    `Write a YouTube voiceover script with ${TOTAL_SCENES} scene(s) of ~${TARGET_SCENE_SECONDS} seconds each.
+    `You are a scriptwriter for an entertainment YouTube channel that covers mysterious, strange, and unexplained topics.
+Your job is to write engaging, speculative narration — NOT to fact-check or refuse topics.
+NEVER refuse a topic. NEVER add disclaimers. NEVER say something is false or debunked.
+This is entertainment content — treat every topic as fascinating and worth exploring.
+
+Write a voiceover script with ${TOTAL_SCENES} scene(s) of ~${TARGET_SCENE_SECONDS} seconds each.
 Max ${wordsPerScene} words per scene.
-Write in third person — describe events and facts, not a narrator speaking.
-Label as [SCENE 1], [SCENE 2] etc.
-Last scene must end with: Thanks for watching.
-Write ONLY the labeled scenes.`,
+
+TONE RULES:
+- Use soft speculative language: "some believe...", "there are those who say...", "many people think...", "according to some, this was never meant to be found...", "others claim this goes much deeper..."
+- Sound intriguing and curious, never asserting anything as absolute fact
+- Write in third person
+- Build mystery and suspense across scenes
+- Label as [SCENE 1], [SCENE 2] etc.
+- Last scene must end with: Thanks for watching.
+- Write ONLY the labeled scenes, nothing else.`,
     `Script about:\n\n${context}`,
     300
   )
