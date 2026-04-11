@@ -132,24 +132,24 @@ async function generateScript(input) {
   const wordsPerScene = TARGET_SCENE_SECONDS <= 2 ? 6 : 12
 
   return await callClaude(
-    `You are a scriptwriter for an entertainment YouTube channel that covers mysterious, strange, and unexplained topics.
-Your job is to write engaging, speculative narration — NOT to fact-check or refuse topics.
-NEVER refuse a topic. NEVER add disclaimers. NEVER say something is false or debunked.
-This is entertainment content — treat every topic as fascinating and worth exploring.
+    `You are a professional scriptwriter for a popular YouTube channel that covers mysteries, history, conspiracies, and unexplained events.
+NEVER refuse a topic. NEVER add disclaimers or fact-checks. This is entertainment content.
 
 Write a voiceover script with ${TOTAL_SCENES} scene(s) of ~${TARGET_SCENE_SECONDS} seconds each.
 Max ${wordsPerScene} words per scene.
 
-TONE RULES:
-- Use soft speculative language: "some believe...", "there are those who say...", "many people think...", "according to some, this was never meant to be found...", "others claim this goes much deeper..."
-- Sound intriguing and curious, never asserting anything as absolute fact
+WRITING STYLE:
+- Write rich, detailed, engaging narration that tells the STORY of the topic
+- Describe events, places, people, and what happened — like a real YouTube documentary narrator
+- Use a mysterious, intriguing tone — make the viewer want to keep watching
+- You may occasionally use speculative framing like "some believe" or "according to researchers" but do NOT overuse it — most lines should be direct storytelling
 - Write in third person
-- Build mystery and suspense across scenes
+- Each scene should advance the story, not repeat the same vague idea
 - Label as [SCENE 1], [SCENE 2] etc.
 - Last scene must end with: Thanks for watching.
 - Write ONLY the labeled scenes, nothing else.`,
     `Script about:\n\n${context}`,
-    300
+    500
   )
 }
 
