@@ -28,6 +28,30 @@ const safeJSON = str => {
   return JSON.parse(clean)
 }
 
+async function sendLongMessage(chatId, text) {
+  const MAX = 4000
+  if (text.length <= MAX) {
+    await bot.sendMessage(chatId, text)
+    return
+  }
+  const parts = []
+  let remaining = text
+  while (remaining.length > 0) {
+    if (remaining.length <= MAX) {
+      parts.push(remaining)
+      break
+    }
+    let cut = remaining.lastIndexOf("\n", MAX)
+    if (cut < MAX / 2) cut = remaining.lastIndexOf(" ", MAX)
+    if (cut < MAX / 2) cut = MAX
+    parts.push(remaining.slice(0, cut))
+    remaining = remaining.slice(cut).trim()
+  }
+  for (const part of parts) {
+    await bot.sendMessage(chatId, part)
+  }
+}
+
 const stoppedChats = new Set()
 let userState = {}
 
@@ -877,7 +901,8 @@ bot.on("message", async msg => {
       const topic = text.startsWith("http") ? text.split("/").pop().replace(/_/g, " ") : text.slice(0, 60)
 
       userState[chatId] = { step: "waiting_script_approval", input: text, topic, rawScript }
-      await bot.sendMessage(chatId, `📄 Script (${wordCount} words, ~${Math.round(wordCount / 2.5 / 60)} min):\n\n${rawScript}\n\n✅ Send "ok" to continue or 🔄 "redo" for a new script.`)
+      await sendLongMessage(chatId, `📄 Script (${wordCount} words, ~${Math.round(wordCount / 2.5 / 60)} min):\n\n${rawScript}`)
+      await bot.sendMessage(chatId, `✅ Send "ok" to continue or 🔄 "redo" for a new script.`)
     } catch (err) {
       console.error("Script failed:", err)
       await bot.sendMessage(chatId, `❌ Script failed: ${err.message}\n\nSend 'do it' to try again.`)
@@ -894,7 +919,8 @@ bot.on("message", async msg => {
         const rawScript = await generateFullScript(state.input)
         const wordCount = countWords(rawScript)
         userState[chatId] = { ...state, rawScript }
-        await bot.sendMessage(chatId, `📄 Script (${wordCount} words, ~${Math.round(wordCount / 2.5 / 60)} min):\n\n${rawScript}\n\n✅ Send "ok" to continue or 🔄 "redo" for a new script.`)
+        await sendLongMessage(chatId, `📄 Script (${wordCount} words, ~${Math.round(wordCount / 2.5 / 60)} min):\n\n${rawScript}`)
+        await bot.sendMessage(chatId, `✅ Send "ok" to continue or 🔄 "redo" for a new script.`)
       } catch (err) {
         await bot.sendMessage(chatId, `❌ Script failed: ${err.message}`)
       }
