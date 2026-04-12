@@ -536,8 +536,9 @@ RULES:
 // SCENE BREAKDOWN — build image prompts
 // ─────────────────────────────────────────
 async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex) {
-  const userVisualNote = visualSuggestion ? `\nUser's visual direction: ${visualSuggestion}` : ""
+  const userVisualNote = visualSuggestion ? ` ${visualSuggestion}.` : ""
   const scenes = []
+  const previousPrompts = []
 
   for (let i = 0; i < sceneTexts.length; i++) {
     const absIndex = globalSceneIndex + i
@@ -545,15 +546,26 @@ async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalScen
     const camera = absIndex === 0 ? OPENING_CAMERA : getCam(absIndex)
     const angle = absIndex === 0 ? OPENING_ANGLE : getAngle(absIndex)
 
-    const systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
-IMPORTANT: Include PEOPLE or CHARACTERS in the scene whenever the script mentions or implies their presence. Show them doing something relevant — exploring, working, reacting, observing. Each scene should have DIFFERENT poses and actions — avoid repetitive gestures like pointing. Only omit people if the script describes an empty uninhabited place.
-Describe: who is in the scene and what they're doing, the location, environment, objects, sky, light, time of day, colors, atmosphere.
-Be specific and cinematic.
-Camera angle: ${angle.prompt}.
-Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`
+    const prevContext = previousPrompts.length > 0
+      ? `\nPREVIOUS SCENES (DO NOT REPEAT similar compositions):\n${previousPrompts.map((p, j) => `- Scene ${j + 1}: ${p}`).join("\n")}`
+      : ""
 
-    const imagePrompt = await callClaude(systemPrompt, `Script: "${script}"`, 400)
-    const trimmedPrompt = imagePrompt.trim()
+    const systemPrompt = `Write a SHORT image prompt (20-30 words max) for this script line.
+Be LITERAL and SIMPLE — describe only what is physically in the frame. No poetry, no metaphors, no atmosphere descriptions.
+Format: "[angle]. [who/what is in the scene] [what they are doing] [where]. [time of day]."${prevContext}
+
+RULES:
+- Start with the camera angle: "${angle.prompt}"
+- Each scene MUST show a DIFFERENT subject, location, or moment than previous scenes
+- Include people when the script implies them
+- Keep it under 30 words
+- Style: ${style.mood}.${userVisualNote}
+- Write ONLY the prompt, nothing else`
+
+    const imagePrompt = await callClaude(systemPrompt, `Script: "${script}"`, 100)
+    const trimmedPrompt = imagePrompt.trim().replace(/^["']|["']$/g, "")
+
+    previousPrompts.push(trimmedPrompt.slice(0, 60))
 
     scenes.push({
       script,
