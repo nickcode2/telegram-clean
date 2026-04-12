@@ -327,6 +327,7 @@ Write a YouTube voiceover narration of EXACTLY ${targetWords} words (between ${m
 The narration must be 10 to 11 minutes when spoken aloud at normal pace.
 
 WRITING STYLE:
+- THE FIRST 3 SENTENCES ARE THE MOST IMPORTANT — they must be extremely dramatic, intriguing, and visually striking. Open with something that HOOKS the viewer immediately. Use vivid imagery, a shocking statement, or a mystery that demands attention. The viewer decides in the first 20 seconds whether to keep watching.
 - Write in flowing paragraphs — do NOT use scene labels, bullet points, or headers
 - Write rich, detailed, engaging narration that tells the STORY of the topic
 - Use a mysterious, intriguing tone — make the viewer want to keep watching
@@ -406,7 +407,8 @@ Return ONLY valid JSON — no markdown:
 
 
 const THUMBNAIL_STYLE_SUFFIX = `
-Photorealistic photograph, super high definition, ultra sharp detail. High contrast with vibrant saturated colors that pop and catch the eye. Bold dramatic lighting. Every detail is crisp and clear even at small sizes. Image demands attention and makes people want to click.`
+Photorealistic photograph, super high definition, ultra sharp detail. High contrast with vibrant saturated colors that pop and catch the eye. Bold dramatic lighting. Every detail is crisp and clear even at small sizes. Image demands attention and makes people want to click.
+Everything in the image must be physically possible and make sense in the real world. No fantasy elements, no impossible physics, no duplicated objects, no magical effects. The drama comes from the real moment, not from adding impossible elements.`
 
 
 // ─────────────────────────────────────────
@@ -421,6 +423,7 @@ The thumbnail must be:
 - Vivid colors that pop on a small screen
 - Mysterious or shocking mood that makes people CLICK
 - Should work as a standalone image without text
+- Everything must be PHYSICALLY POSSIBLE and make sense in the real world — no fantasy, no impossible physics, no duplicated objects, no magical glowing effects. Drama comes from the REAL moment.
 Visual style: ${style.colorPalette}, ${style.lighting}, ${style.mood}.
 Write ONLY the image description, nothing else.`,
     `Topic: ${topic}\nScript summary: ${script.slice(0, 500)}`,
@@ -500,53 +503,32 @@ function splitScriptIntoChunks(script) {
 
 
 // ─────────────────────────────────────────
-// SPLIT CHUNK INTO SCENES
-// Groups complete sentences to ~12 words each
-// Never breaks mid-sentence
+// SPLIT CHUNK INTO SCENES — Claude does the splitting
+// Each scene = complete thought, ~10-15 words, natural pause after
 // ─────────────────────────────────────────
-function splitChunkIntoScenes(chunkText) {
-  const sentences = splitIntoSentences(chunkText)
-  const scenes = []
-  let current = ""
+async function splitChunkIntoScenes(chunkText) {
+  const raw = await callClaude(
+    `Split this narration text into individual scenes for a video. Each scene will be spoken aloud and followed by a pause.
 
-  for (const sentence of sentences) {
-    const combined = current ? current + " " + sentence : sentence
-
-    // Check if combined is too long
-    if (countWords(combined) > WORDS_PER_SCENE + 4) {
-      // Push current if we have any
-      if (current) scenes.push(current.trim())
-
-      // If this sentence alone is too long, split at commas
-      if (countWords(sentence) > WORDS_PER_SCENE + 4) {
-        const parts = sentence.split(/,\s*/)
-        let sub = ""
-        for (const part of parts) {
-          const subCombined = sub ? sub + ", " + part : part
-          if (countWords(subCombined) > WORDS_PER_SCENE + 4 && sub) {
-            scenes.push(sub.trim())
-            sub = part
-          } else {
-            sub = subCombined
-          }
-        }
-        current = sub
-      } else {
-        current = sentence
-      }
-    } else {
-      current = combined
-    }
+RULES:
+- Each scene MUST be a COMPLETE thought that makes sense on its own
+- Each scene should be roughly 8-16 words (one or two short sentences)
+- NEVER cut a sentence in half — every scene must end at a natural pause point (period, question mark, exclamation mark)
+- You may slightly adjust wording to make scenes flow better with pauses between them
+- Return ONLY a JSON array of strings, each string being one scene
+- Example: ["The desert stretched endlessly beneath a burning sky.", "Something had crashed here, and the military wanted it hidden."]
+- Return ONLY the JSON array, no other text`,
+    chunkText,
+    2000
+  )
+  try {
+    return safeJSON(raw)
+  } catch {
+    // Fallback: split by sentences
+    console.log("Claude scene split failed, falling back to sentence split")
+    const sentences = splitIntoSentences(chunkText)
+    return sentences.length > 0 ? sentences : [chunkText]
   }
-  if (current.trim()) scenes.push(current.trim())
-
-  // If last scene is too short (< 4 words), merge with previous
-  if (scenes.length > 1 && countWords(scenes[scenes.length - 1]) < 4) {
-    const last = scenes.pop()
-    scenes[scenes.length - 1] += " " + last
-  }
-
-  return scenes
 }
 
 
@@ -1092,7 +1074,7 @@ bot.on("message", async msg => {
       userState[chatId] = { step: "processing_chunks", topic, rawScript, style, visualSuggestion, chunks, chunkPaths: [], currentChunk: 0, globalSceneIndex: 0, totalDuration: 0 }
 
       try {
-        await processChunk(chatId, 0, chunks.length, splitChunkIntoScenes(chunks[0]), style, visualSuggestion, 0)
+        await processChunk(chatId, 0, chunks.length, await splitChunkIntoScenes(chunks[0]), style, visualSuggestion, 0)
       } catch (err) {
         if (err.message === "Stopped by user") return
         console.error("Chunk processing failed:", err)
@@ -1292,7 +1274,7 @@ Keep it dramatic and eye-catching for YouTube.`,
     if (/^yes$/i.test(text)) {
       const { chunks, chunkPaths, currentChunk, globalSceneIndex, style, visualSuggestion, totalDuration, topic, rawScript } = state
       const nextChunk = (currentChunk || 0) + 1
-      const scenesInLastChunk = splitChunkIntoScenes(chunks[currentChunk || 0]).length
+      const scenesInLastChunk = (await splitChunkIntoScenes(chunks[currentChunk || 0])).length
       const nextGlobalIndex = globalSceneIndex + scenesInLastChunk
 
       if (nextChunk >= chunks.length) {
@@ -1332,7 +1314,7 @@ Keep it dramatic and eye-catching for YouTube.`,
         await bot.sendMessage(chatId, `\n📦 Starting chunk ${nextChunk + 1}/${chunks.length}...`)
         userState[chatId] = { ...state, currentChunk: nextChunk, globalSceneIndex: nextGlobalIndex }
 
-        await processChunk(chatId, nextChunk, chunks.length, splitChunkIntoScenes(chunks[nextChunk]), style, visualSuggestion, nextGlobalIndex)
+        await processChunk(chatId, nextChunk, chunks.length, await splitChunkIntoScenes(chunks[nextChunk]), style, visualSuggestion, nextGlobalIndex)
       } catch (err) {
         if (err.message === "Stopped by user") return
         await bot.sendMessage(chatId, `❌ Failed: ${err.message}`)
