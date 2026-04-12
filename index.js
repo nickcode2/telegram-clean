@@ -327,13 +327,15 @@ Write a YouTube voiceover narration of EXACTLY ${targetWords} words (between ${m
 The narration must be 10 to 11 minutes when spoken aloud at normal pace.
 
 WRITING STYLE:
-- THE FIRST 3 SENTENCES ARE THE MOST IMPORTANT — they must be extremely dramatic, intriguing, and visually striking. Open with something that HOOKS the viewer immediately. Use vivid imagery, a shocking statement, or a mystery that demands attention. The viewer decides in the first 20 seconds whether to keep watching.
+- THE FIRST 3 SENTENCES ARE THE MOST IMPORTANT — they must be extremely dramatic, intriguing, and visually striking. Open with something that HOOKS the viewer immediately. The viewer decides in the first 20 seconds whether to keep watching.
+- Fully original wording — never repeat phrases, sentences, or ideas
+- HIGH INTENSITY first half — fast-paced, gripping, constant revelations
+- DEEP IMMERSIVE second half — slower, more detailed, emotionally resonant
+- ESCALATION throughout — each paragraph should raise the stakes higher
+- Strong emotional payoff at the end before "Thanks for watching"
 - Write in flowing paragraphs — do NOT use scene labels, bullet points, or headers
-- Write rich, detailed, engaging narration that tells the STORY of the topic
-- Use a mysterious, intriguing tone — make the viewer want to keep watching
 - Write in third person — describe events, places, people
 - You may occasionally use speculative framing like "some believe" but mostly direct storytelling
-- Build suspense and mystery throughout
 - End the script with the exact words: Thanks for watching.
 - Write ONLY the narration text, nothing else — no titles, no notes, no commentary`,
     `Script about:\n\n${context}`,
@@ -504,19 +506,20 @@ function splitScriptIntoChunks(script) {
 
 // ─────────────────────────────────────────
 // SPLIT CHUNK INTO SCENES — Claude does the splitting
-// Each scene = complete thought, ~10-15 words, natural pause after
+// Each scene = complete thought, 8-12 words (~5 seconds of speech)
 // ─────────────────────────────────────────
 async function splitChunkIntoScenes(chunkText) {
   const raw = await callClaude(
-    `Split this narration text into individual scenes for a video. Each scene will be spoken aloud and followed by a pause.
+    `Split this narration text into individual scenes for a video. Each scene will be spoken aloud (~5 seconds) and followed by a 1-2 second pause.
 
 RULES:
 - Each scene MUST be a COMPLETE thought that makes sense on its own
-- Each scene should be roughly 8-16 words (one or two short sentences)
-- NEVER cut a sentence in half — every scene must end at a natural pause point (period, question mark, exclamation mark)
-- You may slightly adjust wording to make scenes flow better with pauses between them
+- Each scene should be 8-12 words (about 5 seconds when spoken). This is critical for timing.
+- NEVER go over 15 words in a single scene
+- NEVER cut a sentence in half — every scene must end at a period, question mark, or exclamation mark
+- If a sentence is too long (over 15 words), split it into two scenes by rephrasing slightly
 - Return ONLY a JSON array of strings, each string being one scene
-- Example: ["The desert stretched endlessly beneath a burning sky.", "Something had crashed here, and the military wanted it hidden."]
+- Example: ["Something crashed in the New Mexico desert.", "The military arrived within hours.", "What they found would change everything."]
 - Return ONLY the JSON array, no other text`,
     chunkText,
     2000
@@ -524,7 +527,6 @@ RULES:
   try {
     return safeJSON(raw)
   } catch {
-    // Fallback: split by sentences
     console.log("Claude scene split failed, falling back to sentence split")
     const sentences = splitIntoSentences(chunkText)
     return sentences.length > 0 ? sentences : [chunkText]
@@ -551,13 +553,21 @@ async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalScen
       : ""
 
     const systemPrompt = `Write a SHORT image prompt (20-30 words max) for this script line.
-Be LITERAL and SIMPLE — describe only what is physically in the frame. No poetry, no metaphors, no atmosphere descriptions.
+Be LITERAL and SIMPLE — describe only what is physically in the frame. No poetry, no metaphors.
 Format: "[angle]. [who/what is in the scene] [what they are doing] [where]. [time of day]."${prevContext}
+
+MUST INCLUDE in every prompt:
+- Ultra realistic
+- Massive scale when appropriate
+- People actively performing a visible action (not standing still)
+- Clear weather conditions
+- Dramatic lighting
+- Visible tension or danger when the script implies it
+- No fantasy elements — everything must be physically possible
 
 RULES:
 - Start with the camera angle: "${angle.prompt}"
 - Each scene MUST show a DIFFERENT subject, location, or moment than previous scenes
-- Include people when the script implies them
 - Keep it under 30 words
 - Style: ${style.mood}.${userVisualNote}
 - Write ONLY the prompt, nothing else`
@@ -651,9 +661,9 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
   } catch {}
 
   const peopleWords = /\b(people|person|soldier|military|personnel|crowd|man|woman|figure|worker|officer|guard|child|group)\b/i
-  let fullPrompt = motionPrompt
+  let fullPrompt = `${motionPrompt}, premium documentary cinematography, cinematic movement`
   if (peopleWords.test(imagePrompt)) {
-    fullPrompt += ", people move naturally — subtle gestures, shifting weight, turning heads, walking slowly, conversing with each other"
+    fullPrompt += ", people visibly performing actions — walking, working, gesturing, interacting naturally"
   }
 
   console.log(`Video ${index + 1}: sending to Kling`)
