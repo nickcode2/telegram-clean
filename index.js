@@ -152,7 +152,7 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const faceUrl = await uploadToReplicate(facePath, "image/png")
 
   // Common description of the presenter — must match reference face
-  const presenterDesc = "young beautiful woman with dark hair, green eyes, full lips, glowing skin, attractive and confident. Medium close-up shot from waist up, facing the camera"
+  const presenterDesc = "beautiful woman around 30 years old with dark hair, green eyes, full lips, glowing skin, attractive and confident. Medium close-up shot from waist up, facing the camera, natural relaxed pose with arms at her sides or one hand holding a microphone"
 
   let locationPrompt
   if (isStudio) {
@@ -263,7 +263,7 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
       input: {
         image: imageUrl,
         audio: audioUrl,
-        prompt: "Person looking directly at camera, maintaining eye contact, natural hand gestures while speaking, confident presenter body language, subtle head movements"
+        prompt: "Professional TV presenter speaking to camera. Natural body language that follows speech rhythm — hands move to emphasize key points then return to rest position. Subtle head nods and tilts. Arms relaxed, not frozen in one position. Occasional weight shifts. Confident but natural posture. Expressions change with the emotional content of speech."
       }
     })
   })
@@ -1114,7 +1114,7 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
             method: "POST",
             headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
             body: JSON.stringify({
-              input: { start_image: presenterImgUrl, prompt: "subtle environment ambience, natural background sounds", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+              input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, construction sounds, machinery, wind, ambient environmental noise, birds, traffic", duration: 5, aspect_ratio: "16:9", generate_audio: true }
             })
           })
           const sfxPred = await sfxRes.json()
