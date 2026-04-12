@@ -149,22 +149,24 @@ let presenterOutfit = ""
 
 async function generatePresenterImage(script, topic, isStudio, chatId) {
   const facePath = await downloadPresenterFace()
-  // Upload face to Replicate to get a URL for image_prompt
   const faceUrl = await uploadToReplicate(facePath, "image/png")
+
+  // Common description of the presenter — must match reference face
+  const presenterDesc = "young beautiful woman with dark hair, green eyes, full lips, glowing skin, attractive and confident. Medium close-up shot from waist up, facing the camera"
 
   let locationPrompt
   if (isStudio) {
-    locationPrompt = `Professional woman TV presenter in a modern broadcast studio, standing in front of a large screen showing imagery related to: ${topic}. She wears a navy blazer and white blouse. Studio lighting, monitors visible. She gestures toward the screen.`
+    locationPrompt = `${presenterDesc}. She stands in a modern broadcast studio in front of a large screen showing imagery about: ${topic}. She wears a fitted navy blazer and white blouse. Studio lighting, monitors visible. She gestures toward the screen while presenting.`
   } else {
     if (!presenterOutfit) {
       presenterOutfit = await callClaude(
-        `Based on this topic, describe in 10 words what clothing a female field reporter would wear at this location. Be specific about colors and items. Write ONLY the clothing.`,
+        `Based on this topic, describe in 10 words what stylish but practical clothing a young attractive female field reporter would wear at this location. Be specific about colors and style. Write ONLY the clothing.`,
         topic,
         50
       )
       presenterOutfit = presenterOutfit.trim()
     }
-    locationPrompt = `Professional woman reporter on location, wearing ${presenterOutfit}. She is at the actual site: "${script}". She faces the camera, gesturing toward the scene behind her. Real location, dramatic natural lighting.`
+    locationPrompt = `${presenterDesc}. She is on location wearing ${presenterOutfit}. Behind her: the actual scene of "${script}". She gestures toward the scene while reporting. Real location, dramatic natural lighting.`
   }
 
   const fullPrompt = locationPrompt + REALISM_STYLE_SUFFIX
@@ -177,6 +179,7 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
       input: {
         prompt: fullPrompt,
         image_prompt: faceUrl,
+        image_prompt_strength: 0.45,
         aspect_ratio: "16:9",
         width: 1344,
         height: 768,
@@ -920,8 +923,8 @@ function isLipSyncScene(globalSceneIndex) {
   return (globalSceneIndex - 2) % 5 === 0
 }
 
-// Build a lip sync scene — no delay, no SFX, video = audio duration exactly
-function buildLipSyncScene(vidPath, voicePath, dur, i) {
+// Build a lip sync scene — with SFX from original video, slow zoom, no voice delay
+function buildLipSyncScene(vidPath, voicePath, dur, i, sfxVideoPath = null) {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
 
@@ -934,8 +937,38 @@ function buildLipSyncScene(vidPath, voicePath, dur, i) {
   const totalFrames = Math.round(dur * 30)
   execSync(`ffmpeg -y -i "${trimmed}" -vf "zoompan=z='min(zoom+0.0006,1.03)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1280x720:fps=30" -an -c:v libx264 -preset fast -crf 18 "${zoomed}"`)
 
-  // Mix zoomed video with voice only — no SFX, no fade, no delay
   const out = `/tmp/final/scene_${i}.mp4`
+
+  // Try to mix with SFX from Kling video
+  if (sfxVideoPath && fs.existsSync(sfxVideoPath)) {
+    const sfxAudio = `/tmp/videos/lipsync_sfx_${i}.aac`
+    try {
+      execSync(`ffmpeg -y -i "${sfxVideoPath}" -vn -c:a aac -ar 44100 "${sfxAudio}"`)
+      if (fs.existsSync(sfxAudio)) {
+        const sfxVol = 0.12
+        execSync(
+          `ffmpeg -y -i "${zoomed}" -i "${voicePath}" -i "${sfxAudio}" -filter_complex "[2:a]volume=${sfxVol},afade=t=in:st=0:d=0.5,afade=t=out:st=${Math.max(0, dur - 1)}:d=1[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+        )
+        return out
+      }
+    } catch (e) {
+      console.log(`SFX mix failed (non-critical): ${e.message}`)
+    }
+  }
+
+  // Check if original lip sync video has audio
+  if (hasAudio(norm)) {
+    const sfxAudio = `/tmp/videos/lipsync_orig_sfx_${i}.aac`
+    try { execSync(`ffmpeg -y -i "${norm}" -vn -c:a aac -ar 44100 "${sfxAudio}"`) } catch {}
+    if (fs.existsSync(sfxAudio)) {
+      execSync(
+        `ffmpeg -y -i "${zoomed}" -i "${voicePath}" -i "${sfxAudio}" -filter_complex "[2:a]volume=0.12,afade=t=in:st=0:d=0.5,afade=t=out:st=${Math.max(0, dur - 1)}:d=1[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+      )
+      return out
+    }
+  }
+
+  // Fallback: voice only
   execSync(`ffmpeg -y -i "${zoomed}" -i "${voicePath}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
   return out
 }
@@ -1058,7 +1091,7 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
       await bot.sendMessage(chatId, `📝 Scene ${i + 1} script:\n"${s.script}"`)
 
       if (isLipSync) {
-        // PRESENTER SCENE — generate with Lauren voice, Flux face image, OmniHuman lip sync
+        // PRESENTER SCENE — generate with Lauren voice, Flux face image, OmniHuman lip sync + Kling SFX
         const isStudio = isStudioScene()
         const sceneType = isStudio ? "studio" : "location"
         await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — presenter (${sceneType}), generating...`)
@@ -1072,9 +1105,32 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
         const presenterImgPath = await generatePresenterImage(s.script, topic, isStudio, chatId)
         await bot.sendDocument(chatId, presenterImgPath, { caption: `📸 Presenter image (${sceneType})` })
 
+        // Generate Kling video for SFX audio (environment sounds)
+        let sfxVideoPath = null
+        try {
+          await bot.sendMessage(chatId, `🔊 Generating environment SFX...`)
+          const presenterImgUrl = await uploadToReplicate(presenterImgPath, "image/jpeg")
+          const sfxRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: { start_image: presenterImgUrl, prompt: "subtle environment ambience, natural background sounds", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+            })
+          })
+          const sfxPred = await sfxRes.json()
+          if (sfxPred.id) {
+            const sfxResult = await withTimeout(pollReplicate(sfxPred.id, `SFX ${absIdx}`, chatId), `SFX ${absIdx}`)
+            const sfxUrl = Array.isArray(sfxResult.output) ? sfxResult.output[0] : sfxResult.output
+            sfxVideoPath = `/tmp/videos/presenter_sfx_${absIdx}.mp4`
+            fs.writeFileSync(sfxVideoPath, await (await fetch(sfxUrl)).buffer())
+          }
+        } catch (e) {
+          console.log(`Presenter SFX failed (non-critical): ${e.message}`)
+        }
+
         // Generate lip sync (OmniHuman)
         const vidPath = await generateLipSync(presenterImgPath, voicePath, absIdx, chatId)
-        lipSyncVideos[i] = vidPath
+        lipSyncVideos[i] = { vidPath, sfxVideoPath }
         images.push(null)
         await bot.sendVideo(chatId, vidPath, { caption: `🎤 Presenter scene ${i + 1}` })
       } else {
@@ -1275,8 +1331,9 @@ Keep it dramatic and eye-catching for YouTube.`,
           if (lipSyncFlags[i]) {
             // LIP SYNC — already generated, just use it
             if (lipSyncVideos && lipSyncVideos[i]) {
-              videos.push(lipSyncVideos[i])
-              await bot.sendMessage(chatId, `🎤 Video ${i + 1}/${scenes.length} — lip-sync (already generated)`)
+              const lsData = lipSyncVideos[i]
+              videos.push(typeof lsData === "string" ? lsData : lsData.vidPath)
+              await bot.sendMessage(chatId, `🎤 Video ${i + 1}/${scenes.length} — presenter (already generated)`)
             } else {
               videos.push(null)
             }
@@ -1361,9 +1418,10 @@ User feedback: ${feedback}`,
           const { voicePath, audioDuration } = voices[i]
 
           if (lipSyncFlags && lipSyncFlags[i]) {
-            // Lip sync scene — no delay, video = audio duration
+            // Lip sync scene — with SFX from Kling
             chunkDuration += audioDuration
-            scenePaths.push(buildLipSyncScene(videos[i], voicePath, audioDuration, absIdx))
+            const sfxPath = lipSyncVideos && lipSyncVideos[i] && typeof lipSyncVideos[i] === "object" ? lipSyncVideos[i].sfxVideoPath : null
+            scenePaths.push(buildLipSyncScene(videos[i], voicePath, audioDuration, absIdx, sfxPath))
           } else {
             // Normal scene — with pacing-based delay and SFX
             const pacing = scenes[i]?.pacing || "normal"
