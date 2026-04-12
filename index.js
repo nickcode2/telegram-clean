@@ -239,12 +239,36 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const pred = await res.json()
   if (!pred.id) throw new Error(`Presenter image failed: ${pred.detail || JSON.stringify(pred)}`)
 
-  const result = await withTimeout(pollReplicate(pred.id, "Presenter image", chatId), "Presenter image")
-  const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
-  const buf = await (await fetch(imageUrl)).buffer()
-  const imgPath = `/tmp/images/presenter_${Date.now()}.jpg`
-  fs.writeFileSync(imgPath, buf)
-  return imgPath
+  try {
+    const result = await withTimeout(pollReplicate(pred.id, "Presenter image", chatId), "Presenter image")
+    const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
+    const buf = await (await fetch(imageUrl)).buffer()
+    const imgPath = `/tmp/images/presenter_${Date.now()}.jpg`
+    fs.writeFileSync(imgPath, buf)
+    return imgPath
+  } catch (err) {
+    if (/sensitive|flagged|E005|safety/i.test(err.message)) {
+      console.log("Presenter image flagged, retrying with safe prompt...")
+      // Retry with a generic safe prompt
+      const safePrompt = `${presenterDesc}. She stands outdoors in a neutral professional setting. Clear sky, natural daylight.` + REALISM_STYLE_SUFFIX
+      const res2 = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: { prompt: safePrompt, image_prompt: faceUrl, image_prompt_strength: 0.45, aspect_ratio: "16:9", width: 1344, height: 768, output_format: "jpg", output_quality: 95 }
+        })
+      })
+      const pred2 = await res2.json()
+      if (!pred2.id) throw new Error(`Presenter retry failed: ${pred2.detail || JSON.stringify(pred2)}`)
+      const result2 = await withTimeout(pollReplicate(pred2.id, "Presenter retry", chatId), "Presenter retry")
+      const url2 = Array.isArray(result2.output) ? result2.output[0] : result2.output
+      const buf2 = await (await fetch(url2)).buffer()
+      const imgPath2 = `/tmp/images/presenter_${Date.now()}.jpg`
+      fs.writeFileSync(imgPath2, buf2)
+      return imgPath2
+    }
+    throw err
+  }
 }
 
 async function generatePresenterVoice(text, index) {
@@ -556,39 +580,14 @@ YOUTUBE THUMBNAIL PSYCHOLOGY:
 - Everything must be PHYSICALLY POSSIBLE — no fantasy, no impossible physics, no duplicated objects
 - Bold dramatic lighting with strong shadows
 - The image must make someone STOP scrolling and CLICK
+- AVOID words that trigger AI safety filters: no gore, blood, death, weapons being fired, corpses, nudity, graphic violence, explosions. Describe scenes in a documentary tone.
 
 Write ONLY the 30-word prompt, nothing else.`,
     `Topic: ${topic}\n\nFULL SCRIPT:\n${script}`,
     150
   )
 
-  // Use thumbnail suffix instead of realism suffix
-  const fullPrompt = thumbPrompt.trim() + THUMBNAIL_STYLE_SUFFIX
-  console.log(`Thumbnail: ${fullPrompt.slice(0, 120)}...`)
-
-  const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      input: {
-        prompt: fullPrompt,
-        aspect_ratio: "16:9",
-        width: 1344,
-        height: 768,
-        output_format: "jpg",
-        output_quality: 95
-      }
-    })
-  })
-  const pred = await res.json()
-  if (!pred.id) throw new Error(`Thumbnail failed to start: ${pred.detail || JSON.stringify(pred)}`)
-
-  const result = await withTimeout(pollReplicate(pred.id, "Thumbnail", chatId), "Thumbnail")
-  const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
-  const buf = await (await fetch(imageUrl)).buffer()
-  const path = `/tmp/images/thumbnail.jpg`
-  fs.writeFileSync(path, buf)
-  return { path, url: imageUrl }
+  return await generateImage(thumbPrompt.trim() + " " + THUMBNAIL_STYLE_SUFFIX.trim(), 999, chatId)
 }
 
 
