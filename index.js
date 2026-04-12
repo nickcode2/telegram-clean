@@ -116,27 +116,101 @@ function isStopped(chatId) { return stoppedChats.has(chatId) }
 
 
 // ─────────────────────────────────────────
-// YOUTUBER FACE PHOTOS (Google Drive PNGs)
+// WOMAN PRESENTER
 // ─────────────────────────────────────────
-const FACE_PHOTOS = [
-  "1-j1_7baQ9ZUReTkt0akX5R1bg8XGlLEg",
-  "1W7GjxliUVN9uyjwZVhzC0S9LjI0s-X3L",
-  "1t0qbfayOQrbWlVPh70sMLn8lHG0oOtEI"
-]
+const PRESENTER_FACE_ID = "1oxbm7wh3MogxXI1j2rHF6fI9GQHht5Kq"
+const PRESENTER_VOICE_ID = "X1amM3LR8OIq8LP92VpO" // Lauren voice
 
-async function downloadFacePhoto(index) {
-  const id = FACE_PHOTOS[index]
-  const path = `/tmp/images/face_${index}.png`
+async function downloadPresenterFace() {
+  const path = `/tmp/images/presenter_face.png`
   if (fs.existsSync(path)) return path
-  const res = await fetch(`https://drive.google.com/uc?export=download&id=${id}&confirm=t`)
-  if (!res.ok) throw new Error(`Face photo download failed: ${res.status}`)
+  const res = await fetch(`https://drive.google.com/uc?export=download&id=${PRESENTER_FACE_ID}&confirm=t`)
+  if (!res.ok) throw new Error(`Presenter face download failed: ${res.status}`)
   const buf = await res.buffer()
   fs.writeFileSync(path, buf)
   return path
 }
 
-function getRandomFacePhoto() {
-  return Math.floor(Math.random() * FACE_PHOTOS.length)
+// Presenter location/studio pattern tracker
+// Pattern: 3 location, 1 studio, 3 location, 1 studio...
+let presenterAppearanceCount = 0
+function resetPresenterState() {
+  presenterAppearanceCount = 0
+  presenterOutfit = ""
+}
+function isStudioScene() {
+  const inGroup = presenterAppearanceCount % 4
+  presenterAppearanceCount++
+  return inGroup === 3 // 4th appearance = studio
+}
+
+// First outfit is locked for all location scenes
+let presenterOutfit = ""
+
+async function generatePresenterImage(script, topic, isStudio, chatId) {
+  const facePath = await downloadPresenterFace()
+  // Upload face to Replicate to get a URL for image_prompt
+  const faceUrl = await uploadToReplicate(facePath, "image/png")
+
+  let locationPrompt
+  if (isStudio) {
+    locationPrompt = `Professional woman TV presenter in a modern broadcast studio, standing in front of a large screen showing imagery related to: ${topic}. She wears a navy blazer and white blouse. Studio lighting, monitors visible. She gestures toward the screen.`
+  } else {
+    if (!presenterOutfit) {
+      presenterOutfit = await callClaude(
+        `Based on this topic, describe in 10 words what clothing a female field reporter would wear at this location. Be specific about colors and items. Write ONLY the clothing.`,
+        topic,
+        50
+      )
+      presenterOutfit = presenterOutfit.trim()
+    }
+    locationPrompt = `Professional woman reporter on location, wearing ${presenterOutfit}. She is at the actual site: "${script}". She faces the camera, gesturing toward the scene behind her. Real location, dramatic natural lighting.`
+  }
+
+  const fullPrompt = locationPrompt + REALISM_STYLE_SUFFIX
+  console.log(`Presenter image: ${fullPrompt.slice(0, 120)}...`)
+
+  const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-2-max/predictions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: {
+        prompt: fullPrompt,
+        image_prompt: faceUrl,
+        aspect_ratio: "16:9",
+        width: 1344,
+        height: 768,
+        output_format: "jpg",
+        output_quality: 95
+      }
+    })
+  })
+  const pred = await res.json()
+  if (!pred.id) throw new Error(`Presenter image failed: ${pred.detail || JSON.stringify(pred)}`)
+
+  const result = await withTimeout(pollReplicate(pred.id, "Presenter image", chatId), "Presenter image")
+  const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output
+  const buf = await (await fetch(imageUrl)).buffer()
+  const imgPath = `/tmp/images/presenter_${Date.now()}.jpg`
+  fs.writeFileSync(imgPath, buf)
+  return imgPath
+}
+
+async function generatePresenterVoice(text, index) {
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${PRESENTER_VOICE_ID}`, {
+    method: "POST",
+    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      model_id: "eleven_multilingual_v2",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+    })
+  })
+  if (!res.ok) throw new Error(`ElevenLabs presenter failed: ${res.status}`)
+  const buf = await res.buffer()
+  const path = `/tmp/voices/presenter_voice_${index}.mp3`
+  fs.writeFileSync(path, buf)
+  return path
 }
 
 
@@ -214,27 +288,7 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
 }
 
 
-// ─────────────────────────────────────────
-// TEST LIPSYNC COMMAND (standalone)
-// ─────────────────────────────────────────
-bot.onText(/^test lipsync$/i, msg => {
-  stoppedChats.delete(msg.chat.id)
-  userState[msg.chat.id] = { step: "waiting_lipsync_topic" }
-  bot.sendMessage(msg.chat.id, `🎤 Send a topic for the lip sync test (one 5-second scene).`)
-})
 
-bot.onText(/^lipsync schema$/i, async msg => {
-  try {
-    const res = await fetch("https://api.replicate.com/v1/models/bytedance/omni-human-1.5", {
-      headers: { Authorization: `Bearer ${REPLICATE_TOKEN}` }
-    })
-    const data = await res.json()
-    const schema = JSON.stringify(data?.latest_version?.openapi_schema?.components?.schemas?.Input?.properties || data, null, 2).slice(0, 3000)
-    await bot.sendMessage(msg.chat.id, `OmniHuman schema:\n\n${schema}`)
-  } catch (e) {
-    await bot.sendMessage(msg.chat.id, `Error: ${e.message}`)
-  }
-})
 
 
 // ─────────────────────────────────────────
@@ -440,20 +494,21 @@ Everything in the image must be physically possible and make sense in the real w
 // ─────────────────────────────────────────
 async function generateThumbnail(topic, script, style, chatId) {
   const thumbPrompt = await callClaude(
-    `Create a 30-word image prompt for a YouTube thumbnail about this topic.
+    `You must read the ENTIRE script below and pick the SINGLE most dramatic, shocking, or visually striking moment from the whole story. Then write a 30-word image prompt that captures THAT specific moment as a YouTube thumbnail.
 
-YOUTUBE THUMBNAIL PSYCHOLOGY (follow these rules):
+YOUTUBE THUMBNAIL PSYCHOLOGY:
 - ONE clear subject taking up 40-60% of the frame — not cluttered
 - HIGH CONTRAST between subject and background — subject must pop
-- If there's a person, show EMOTIONAL EXPRESSION on their face (shock, awe, fear, determination)
+- If there's a person, show EMOTIONAL EXPRESSION (shock, awe, fear, determination)
 - VISUAL MYSTERY — something partially hidden, revealed, or about to happen
 - DRAMATIC SCALE — show something massive, imposing, or overwhelming
 - Everything must be PHYSICALLY POSSIBLE — no fantasy, no impossible physics, no duplicated objects
-- Must look completely DIFFERENT from any scene image in the video
 - Bold dramatic lighting with strong shadows
+- The image must make someone STOP scrolling and CLICK
+
 Write ONLY the 30-word prompt, nothing else.`,
-    `Topic: ${topic}\nScript summary: ${script.slice(0, 500)}`,
-    400
+    `Topic: ${topic}\n\nFULL SCRIPT:\n${script}`,
+    150
   )
 
   // Use thumbnail suffix instead of realism suffix
@@ -986,20 +1041,32 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
       // Show the script text for this scene
       await bot.sendMessage(chatId, `📝 Scene ${i + 1} script:\n"${s.script}"`)
 
-      const voicePath = await generateVoice(s.script, absIdx)
-      const audioDuration = getDuration(voicePath)
-      voices.push({ voicePath, audioDuration })
-
       if (isLipSync) {
-        // Lip sync scene — generate video immediately
-        images.push(null)
-        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — YouTuber lip-sync, generating now...`)
-        const faceIdx = getRandomFacePhoto()
-        const facePath = await downloadFacePhoto(faceIdx)
-        const vidPath = await generateLipSync(facePath, voicePath, absIdx, chatId)
+        // PRESENTER SCENE — generate with Lauren voice, Flux face image, OmniHuman lip sync
+        const isStudio = isStudioScene()
+        const sceneType = isStudio ? "studio" : "location"
+        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — presenter (${sceneType}), generating...`)
+
+        // Generate presenter voice (Lauren)
+        const voicePath = await generatePresenterVoice(s.script, absIdx)
+        const audioDuration = getDuration(voicePath)
+        voices.push({ voicePath, audioDuration })
+
+        // Generate presenter image (Flux with face reference)
+        const presenterImgPath = await generatePresenterImage(s.script, topic, isStudio, chatId)
+        await bot.sendDocument(chatId, presenterImgPath, { caption: `📸 Presenter image (${sceneType})` })
+
+        // Generate lip sync (OmniHuman)
+        const vidPath = await generateLipSync(presenterImgPath, voicePath, absIdx, chatId)
         lipSyncVideos[i] = vidPath
-        await bot.sendVideo(chatId, vidPath, { caption: `🎤 LipSync scene ${i + 1}` })
+        images.push(null)
+        await bot.sendVideo(chatId, vidPath, { caption: `🎤 Presenter scene ${i + 1}` })
       } else {
+        // NORMAL SCENE — Ellis voice, Flux image
+        const voicePath = await generateVoice(s.script, absIdx)
+        const audioDuration = getDuration(voicePath)
+        voices.push({ voicePath, audioDuration })
+
         const img = await generateImage(s.imagePrompt, absIdx, chatId)
         images.push(img)
         await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${REALISM_STYLE_SUFFIX}`)
@@ -1025,6 +1092,7 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
 // ─────────────────────────────────────────
 bot.onText(/^do it$/i, msg => {
   stoppedChats.delete(msg.chat.id)
+  resetPresenterState()
   userState[msg.chat.id] = { step: "waiting_input" }
   bot.sendMessage(msg.chat.id, `Send a theme, article link, or paste any text.\n\n💡 Send "stop" anytime to halt.`)
 })
@@ -1036,52 +1104,10 @@ bot.onText(/^do it$/i, msg => {
 bot.on("message", async msg => {
   const chatId = msg.chat.id
   const text = (msg.text || "").trim()
-  if (/^do it$/i.test(text) || /^stop$/i.test(text) || /^test lipsync$/i.test(text) || /^lipsync schema$/i.test(text)) return
+  if (/^do it$/i.test(text) || /^stop$/i.test(text)) return
 
   const state = userState[chatId]
   if (!state) return
-
-  // ── LIPSYNC TEST: user sends topic ──
-  if (state.step === "waiting_lipsync_topic") {
-    userState[chatId] = { step: "processing_lipsync" }
-    try {
-      // Generate one sentence
-      await bot.sendMessage(chatId, `✍️ Writing one line...`)
-      const script = await callClaude(
-        `Write exactly one sentence of 12 words about this topic. Mysterious, intriguing tone. Write ONLY the sentence.`,
-        text,
-        100
-      )
-      await bot.sendMessage(chatId, `📄 Script: ${script}`)
-
-      // Generate voice
-      await bot.sendMessage(chatId, `🎤 Generating voice...`)
-      const voicePath = await generateVoice(script, 0)
-      const audioDuration = getDuration(voicePath)
-      await bot.sendMessage(chatId, `🎤 Voice: ${audioDuration.toFixed(1)}s`)
-
-      // Download random face photo
-      const faceIdx = getRandomFacePhoto()
-      await bot.sendMessage(chatId, `📸 Downloading face photo ${faceIdx + 1}...`)
-      const facePath = await downloadFacePhoto(faceIdx)
-      await bot.sendDocument(chatId, facePath, { caption: `Face photo ${faceIdx + 1}` })
-
-      // Generate lip sync
-      await bot.sendMessage(chatId, `🎥 Generating lip sync with Kling... this takes 2-4 min`)
-      const vidPath = await generateLipSync(facePath, voicePath, 0, chatId)
-
-      // Send result
-      await bot.sendVideo(chatId, vidPath, { caption: `🎬 Lip sync test (${audioDuration.toFixed(1)}s)` })
-      await bot.sendDocument(chatId, vidPath, { caption: `📁 HD lip sync file` })
-      await bot.sendMessage(chatId, `✅ Lip sync test done! Send 'do it' for full video or 'test lipsync' to test again.`)
-      userState[chatId] = {}
-    } catch (err) {
-      console.error("LipSync test failed:", err)
-      await bot.sendMessage(chatId, `❌ LipSync test failed: ${err.message}\n\nSend 'test lipsync' to try again.`)
-      userState[chatId] = {}
-    }
-    return
-  }
 
   // ── User sends topic ──
   if (state.step === "waiting_input") {
@@ -1369,12 +1395,12 @@ User feedback: ${feedback}`,
         for (const i of indices) {
           const absIdx = globalSceneIndex + i
           if (lipSyncFlags && lipSyncFlags[i]) {
-            await bot.sendMessage(chatId, `🔄 Regenerating lip-sync ${i + 1}...`)
-            const faceIdx = getRandomFacePhoto()
-            const facePath = await downloadFacePhoto(faceIdx)
-            const vidPath = await generateLipSync(facePath, voices[i].voicePath, absIdx, chatId)
+            await bot.sendMessage(chatId, `🔄 Regenerating presenter scene ${i + 1}...`)
+            const isStudio = (presenterAppearanceCount - 1) % 4 === 3 // check if last was studio
+            const presenterImgPath = await generatePresenterImage(scenes[i].script, state.topic || "", isStudio, chatId)
+            const vidPath = await generateLipSync(presenterImgPath, voices[i].voicePath, absIdx, chatId)
             videos[i] = vidPath
-            await bot.sendVideo(chatId, vidPath, { caption: `🎤 LipSync ${i + 1} (redone)` })
+            await bot.sendVideo(chatId, vidPath, { caption: `🎤 Presenter ${i + 1} (redone)` })
           } else {
             if (!images[i]) continue
             let motionPrompt = scenes[i].motion
