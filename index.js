@@ -152,7 +152,7 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const faceUrl = await uploadToReplicate(facePath, "image/png")
 
   // Common description of the presenter — must match reference face
-  const presenterDesc = "beautiful woman around 30 years old with dark hair, green eyes, full lips, glowing skin, attractive and confident. Medium close-up shot from waist up, facing the camera, natural relaxed pose with arms at her sides or one hand holding a microphone"
+  const presenterDesc = "beautiful woman around 30 years old with dark hair, green eyes, full lips, glowing skin, attractive and confident. No microphone. Medium close-up shot from waist up, facing the camera, natural relaxed pose, articulating with her hands while explaining"
 
   let locationPrompt
   if (isStudio) {
