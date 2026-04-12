@@ -1185,19 +1185,33 @@ Keep it dramatic and eye-catching for YouTube.`,
       return
     }
 
-    // Redo images
-    const redoMatch = text.match(/^redo\s+([\d,\s]+)/i)
+    // Redo images — with optional feedback like "redo 2, make it more dramatic"
+    const redoMatch = text.match(/^redo\s+([\d,\s]+)(.*)/i)
     if (redoMatch) {
       const indices = redoMatch[1].split(/[,\s]+/).map(n => parseInt(n) - 1).filter(n => n >= 0 && n < scenes.length)
+      const feedback = redoMatch[2] ? redoMatch[2].replace(/^[,\s]+/, "").trim() : ""
       try {
         for (const i of indices) {
           const absIdx = globalSceneIndex + i
+          let newPrompt = scenes[i].imagePrompt
+          if (feedback) {
+            // Ask Claude to modify the prompt based on feedback
+            newPrompt = await callClaude(
+              `Modify this image prompt based on user feedback. Keep it SHORT (20-30 words max). Write ONLY the new prompt.
+User feedback: ${feedback}`,
+              `Original prompt: ${scenes[i].imagePrompt}`,
+              100
+            )
+            newPrompt = newPrompt.trim().replace(/^["']|["']$/g, "")
+            scenes[i].imagePrompt = newPrompt
+            await bot.sendMessage(chatId, `🖼 Updated prompt: ${newPrompt}`)
+          }
           await bot.sendMessage(chatId, `🔄 Regenerating image ${i + 1}...`)
-          const img = await generateImage(scenes[i].imagePrompt, absIdx, chatId)
+          const img = await generateImage(newPrompt, absIdx, chatId)
           images[i] = img
           await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${i + 1} (redone)` })
         }
-        userState[chatId] = { ...state, images }
+        userState[chatId] = { ...state, images, scenes }
         await bot.sendMessage(chatId, `✅ Send "yes" to approve or "redo 2" to redo again`)
       } catch (err) {
         await bot.sendMessage(chatId, `⚠️ Redo failed: ${err.message}`)
@@ -1266,15 +1280,15 @@ Keep it dramatic and eye-catching for YouTube.`,
       return
     }
 
-    // Redo videos
-    const redoMatch = text.match(/^redo\s+([\d,\s]+)/i)
+    // Redo videos — with optional feedback like "redo 2, the camera should orbit around the tree"
+    const redoMatch = text.match(/^redo\s+([\d,\s]+)(.*)/i)
     if (redoMatch) {
       const indices = redoMatch[1].split(/[,\s]+/).map(n => parseInt(n) - 1).filter(n => n >= 0 && n < scenes.length)
+      const feedback = redoMatch[2] ? redoMatch[2].replace(/^[,\s]+/, "").trim() : ""
       try {
         for (const i of indices) {
           const absIdx = globalSceneIndex + i
           if (lipSyncFlags && lipSyncFlags[i]) {
-            // Redo lip sync
             await bot.sendMessage(chatId, `🔄 Regenerating lip-sync ${i + 1}...`)
             const faceIdx = getRandomFacePhoto()
             const facePath = await downloadFacePhoto(faceIdx)
@@ -1282,10 +1296,14 @@ Keep it dramatic and eye-catching for YouTube.`,
             videos[i] = vidPath
             await bot.sendVideo(chatId, vidPath, { caption: `🎤 LipSync ${i + 1} (redone)` })
           } else {
-            // Redo normal video
             if (!images[i]) continue
+            let motionPrompt = scenes[i].motion
+            if (feedback) {
+              motionPrompt = feedback
+              await bot.sendMessage(chatId, `🎥 Using custom motion: ${feedback}`)
+            }
             await bot.sendMessage(chatId, `🔄 Regenerating video ${i + 1}...`)
-            const vidPath = await generateVideo(images[i].url, images[i].path, scenes[i].motion, scenes[i].imagePrompt, absIdx, chatId)
+            const vidPath = await generateVideo(images[i].url, images[i].path, motionPrompt, scenes[i].imagePrompt, absIdx, chatId)
             videos[i] = vidPath
             await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} (redone)` })
           }
