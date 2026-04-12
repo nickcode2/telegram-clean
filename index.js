@@ -362,6 +362,10 @@ Write ONLY the additional narration text.`,
     }
   }
 
+  // Clean up: remove any preamble Claude adds before the actual narration
+  raw = raw.replace(/^Here[\s\S]*?:\s*\n/i, "").trim()
+  raw = raw.replace(/^(Here's|Here is|Below is|The following)[\s\S]*?:\s*\n/i, "").trim()
+
   // If script is too long, trim to maxWords at a sentence boundary
   words = countWords(raw)
   if (words > maxWords) {
@@ -537,7 +541,7 @@ RULES:
 // ─────────────────────────────────────────
 // SCENE BREAKDOWN — build image prompts
 // ─────────────────────────────────────────
-async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex) {
+async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex, topic, scriptSummary) {
   const userVisualNote = visualSuggestion ? ` ${visualSuggestion}.` : ""
   const scenes = []
   const previousPrompts = []
@@ -552,11 +556,17 @@ async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalScen
       ? `\nPREVIOUS SCENES (DO NOT REPEAT similar compositions):\n${previousPrompts.map((p, j) => `- Scene ${j + 1}: ${p}`).join("\n")}`
       : ""
 
-    const systemPrompt = `Write a SHORT image prompt (20-30 words max) for this script line.
+    const systemPrompt = `You are creating an image prompt for a YouTube video about: "${topic}"
+
+VIDEO CONTEXT (read this to understand what the video is about):
+${scriptSummary}
+
+Write a SHORT image prompt (20-30 words max) for this specific scene.
 Be LITERAL and SIMPLE — describe only what is physically in the frame. No poetry, no metaphors.
+The image MUST make sense in the context of the overall video topic above.
 Format: "[angle]. [who/what is in the scene] [what they are doing] [where]. [time of day]."${prevContext}
 
-MUST INCLUDE in every prompt:
+MUST INCLUDE:
 - Ultra realistic
 - Massive scale when appropriate
 - People actively performing a visible action (not standing still)
@@ -572,7 +582,7 @@ RULES:
 - Style: ${style.mood}.${userVisualNote}
 - Write ONLY the prompt, nothing else`
 
-    const imagePrompt = await callClaude(systemPrompt, `Script: "${script}"`, 100)
+    const imagePrompt = await callClaude(systemPrompt, `Scene script line: "${script}"`, 100)
     const trimmedPrompt = imagePrompt.trim().replace(/^["']|["']$/g, "")
 
     previousPrompts.push(trimmedPrompt.slice(0, 60))
@@ -888,14 +898,15 @@ function addMusicHD(vidPath, musicPath, dur) {
 // PROCESS ONE CHUNK (images → approval → videos → approval → build)
 // Returns a promise that resolves when chunk is fully approved
 // ─────────────────────────────────────────
-async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, visualSuggestion, globalSceneIndex) {
+async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, visualSuggestion, globalSceneIndex, topic, rawScript) {
   if (isStopped(chatId)) throw new Error("Stopped by user")
 
   await bot.sendMessage(chatId, `📦 Chunk ${chunkIndex + 1}/${totalChunks} — ${sceneTexts.length} scenes`)
 
-  // Build scene prompts
+  // Build scene prompts with full context
   await bot.sendMessage(chatId, "🎬 Building scene prompts...")
-  const scenes = await buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex)
+  const scriptSummary = rawScript.slice(0, 800)
+  const scenes = await buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex, topic, scriptSummary)
 
   // Generate images + lip sync videos
   await bot.sendMessage(chatId, `🖼 Generating images...`)
@@ -1096,7 +1107,7 @@ bot.on("message", async msg => {
       userState[chatId] = { step: "processing_chunks", topic, rawScript, style, visualSuggestion, chunks, chunkPaths: [], currentChunk: 0, globalSceneIndex: 0, totalDuration: 0 }
 
       try {
-        await processChunk(chatId, 0, chunks.length, await splitChunkIntoScenes(chunks[0]), style, visualSuggestion, 0)
+        await processChunk(chatId, 0, chunks.length, await splitChunkIntoScenes(chunks[0]), style, visualSuggestion, 0, topic, rawScript)
       } catch (err) {
         if (err.message === "Stopped by user") return
         console.error("Chunk processing failed:", err)
@@ -1336,7 +1347,7 @@ Keep it dramatic and eye-catching for YouTube.`,
         await bot.sendMessage(chatId, `\n📦 Starting chunk ${nextChunk + 1}/${chunks.length}...`)
         userState[chatId] = { ...state, currentChunk: nextChunk, globalSceneIndex: nextGlobalIndex }
 
-        await processChunk(chatId, nextChunk, chunks.length, await splitChunkIntoScenes(chunks[nextChunk]), style, visualSuggestion, nextGlobalIndex)
+        await processChunk(chatId, nextChunk, chunks.length, await splitChunkIntoScenes(chunks[nextChunk]), style, visualSuggestion, nextGlobalIndex, topic, rawScript)
       } catch (err) {
         if (err.message === "Stopped by user") return
         await bot.sendMessage(chatId, `❌ Failed: ${err.message}`)
