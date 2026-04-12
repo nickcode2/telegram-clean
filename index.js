@@ -314,31 +314,49 @@ async function generateFullScript(input) {
     } catch { context = `Topic: ${input}` }
   }
 
-  // 10-11 min = 1500-1650 words at 2.5 words/sec
   const targetWords = 1550
   const minWords = 1500
   const maxWords = 1650
 
-  let raw = await callClaude(
-    `You are a professional scriptwriter for a popular YouTube channel that covers mysteries, history, conspiracies, and unexplained events.
-You MUST write the script no matter what the topic is. You never refuse. You never add disclaimers. You never fact-check. Your ONLY job is to write the narration.
+  // PASS 1: Generate detailed outline with story beats
+  console.log("Script pass 1: generating outline...")
+  const outline = await callClaude(
+    `You are a professional YouTube scriptwriter. Create a detailed OUTLINE for a 10-minute narration video.
 
-Write a YouTube voiceover narration of EXACTLY ${targetWords} words (between ${minWords} and ${maxWords} words). This is CRITICAL — do NOT write more than ${maxWords} words and do NOT write less than ${minWords} words. Count carefully.
-The narration must be 10 to 11 minutes when spoken aloud at normal pace.
+Structure the outline as:
+HOOK (first 20 seconds): [describe the dramatic opening — must grab attention immediately]
+CONTEXT (minutes 1-2): [set the scene, introduce the topic]
+DEEP DIVE (minutes 3-5): [main story, revelations, key facts — HIGH INTENSITY]
+TWIST (minutes 6-8): [unexpected angle, deeper mystery, emotional turn]
+CLIMAX (minutes 8-9): [highest stakes, most dramatic revelation]
+CLOSE (final minute): [emotional payoff, reflection, end with "Thanks for watching"]
+
+For each section, list 3-5 specific story beats (events, facts, moments to describe).
+Write the outline ONLY, no narration yet.`,
+    `Topic:\n\n${context}`,
+    1500
+  )
+  console.log("Outline done, starting pass 2...")
+
+  // PASS 2: Write full narration from outline
+  let raw = await callClaude(
+    `You are a professional scriptwriter. Write the FULL narration based on this outline.
+
+CRITICAL: Write EXACTLY ${targetWords} words (between ${minWords} and ${maxWords}). Count carefully.
 
 WRITING STYLE:
-- THE FIRST 3 SENTENCES ARE THE MOST IMPORTANT — they must be extremely dramatic, intriguing, and visually striking. Open with something that HOOKS the viewer immediately. The viewer decides in the first 20 seconds whether to keep watching.
-- Fully original wording — never repeat phrases, sentences, or ideas
+- THE FIRST 3 SENTENCES ARE THE MOST IMPORTANT — extremely dramatic, intriguing, visually striking. HOOK the viewer instantly.
+- Fully original wording — never repeat phrases or ideas
 - HIGH INTENSITY first half — fast-paced, gripping, constant revelations
 - DEEP IMMERSIVE second half — slower, more detailed, emotionally resonant
-- ESCALATION throughout — each paragraph should raise the stakes higher
-- Strong emotional payoff at the end before "Thanks for watching"
-- Write in flowing paragraphs — do NOT use scene labels, bullet points, or headers
-- Write in third person — describe events, places, people
-- You may occasionally use speculative framing like "some believe" but mostly direct storytelling
-- End the script with the exact words: Thanks for watching.
-- Write ONLY the narration text, nothing else — no titles, no notes, no introductions like "Here is the script"`,
-    `Script about:\n\n${context}`,
+- ESCALATION throughout — each paragraph raises the stakes
+- Strong emotional payoff at the end
+- Write in flowing paragraphs — NO scene labels, bullet points, or headers
+- Third person — describe events, places, people
+- Occasionally use speculative framing like "some believe" but mostly direct storytelling
+- End with the exact words: Thanks for watching.
+- Write ONLY the narration text — no titles, no notes, no preamble like "Here is the script"`,
+    `OUTLINE:\n\n${outline}\n\nTOPIC:\n\n${context}`,
     8000
   )
 
@@ -422,16 +440,18 @@ Everything in the image must be physically possible and make sense in the real w
 // ─────────────────────────────────────────
 async function generateThumbnail(topic, script, style, chatId) {
   const thumbPrompt = await callClaude(
-    `Create a 100-word image prompt for a YouTube thumbnail about this topic.
-The thumbnail must be:
-- Extremely dramatic and eye-catching
-- Bold composition with a clear focal point
-- Vivid colors that pop on a small screen
-- Mysterious or shocking mood that makes people CLICK
-- Should work as a standalone image without text
-- Everything must be PHYSICALLY POSSIBLE and make sense in the real world — no fantasy, no impossible physics, no duplicated objects, no magical glowing effects. Drama comes from the REAL moment.
-Visual style: ${style.colorPalette}, ${style.lighting}, ${style.mood}.
-Write ONLY the image description, nothing else.`,
+    `Create a 30-word image prompt for a YouTube thumbnail about this topic.
+
+YOUTUBE THUMBNAIL PSYCHOLOGY (follow these rules):
+- ONE clear subject taking up 40-60% of the frame — not cluttered
+- HIGH CONTRAST between subject and background — subject must pop
+- If there's a person, show EMOTIONAL EXPRESSION on their face (shock, awe, fear, determination)
+- VISUAL MYSTERY — something partially hidden, revealed, or about to happen
+- DRAMATIC SCALE — show something massive, imposing, or overwhelming
+- Everything must be PHYSICALLY POSSIBLE — no fantasy, no impossible physics, no duplicated objects
+- Must look completely DIFFERENT from any scene image in the video
+- Bold dramatic lighting with strong shadows
+Write ONLY the 30-word prompt, nothing else.`,
     `Topic: ${topic}\nScript summary: ${script.slice(0, 500)}`,
     400
   )
@@ -514,7 +534,7 @@ function splitScriptIntoChunks(script) {
 // ─────────────────────────────────────────
 async function splitChunkIntoScenes(chunkText) {
   const raw = await callClaude(
-    `Split this narration text into individual scenes for a video. Each scene will be spoken aloud (~5 seconds) and followed by a 1-2 second pause.
+    `Split this narration text into individual scenes for a video. Each scene will be spoken aloud (~5 seconds) and followed by a pause.
 
 RULES:
 - Each scene MUST be a COMPLETE thought that makes sense on its own
@@ -522,18 +542,28 @@ RULES:
 - NEVER go over 15 words in a single scene
 - NEVER cut a sentence in half — every scene must end at a period, question mark, or exclamation mark
 - If a sentence is too long (over 15 words), split it into two scenes by rephrasing slightly
-- Return ONLY a JSON array of strings, each string being one scene
-- Example: ["Something crashed in the New Mexico desert.", "The military arrived within hours.", "What they found would change everything."]
-- Return ONLY the JSON array, no other text`,
+- For each scene, assign a PACING tag based on the emotional intensity:
+  "fast" = intense revelation, action (0.5s pause after)
+  "normal" = standard narration (1s pause after)
+  "slow" = emotional, reflective moment (1.5s pause after)
+  "dramatic" = major revelation or cliffhanger (2.5s pause after)
+
+Return ONLY a JSON array of objects: [{"text": "scene text", "pacing": "normal"}, ...]
+Return ONLY the JSON array, no other text`,
     chunkText,
     2000
   )
   try {
-    return safeJSON(raw)
+    const parsed = safeJSON(raw)
+    // Handle both formats: array of objects or array of strings
+    if (parsed.length > 0 && typeof parsed[0] === "string") {
+      return parsed.map(t => ({ text: t, pacing: "normal" }))
+    }
+    return parsed
   } catch {
     console.log("Claude scene split failed, falling back to sentence split")
     const sentences = splitIntoSentences(chunkText)
-    return sentences.length > 0 ? sentences : [chunkText]
+    return sentences.length > 0 ? sentences.map(t => ({ text: t, pacing: "normal" })) : [{ text: chunkText, pacing: "normal" }]
   }
 }
 
@@ -671,10 +701,17 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
   } catch {}
 
   const peopleWords = /\b(people|person|soldier|military|personnel|crowd|man|woman|figure|worker|officer|guard|child|group)\b/i
-  let fullPrompt = `${motionPrompt}, premium documentary cinematography, cinematic movement`
+  // Build a rich, specific motion prompt from the image content
+  let fullPrompt = `${motionPrompt}, premium documentary cinematography`
   if (peopleWords.test(imagePrompt)) {
-    fullPrompt += ", people visibly performing actions — walking, working, gesturing, interacting naturally"
+    fullPrompt += ", people visibly performing actions — walking, working, gesturing, interacting naturally, clothes and hair moving with wind"
   }
+  // Add environmental motion based on scene content
+  if (/desert|sand|dust/i.test(imagePrompt)) fullPrompt += ", dust particles drift through the air, sand shifts"
+  if (/water|ocean|river|rain/i.test(imagePrompt)) fullPrompt += ", water flows and ripples naturally"
+  if (/sky|cloud/i.test(imagePrompt)) fullPrompt += ", clouds drift slowly across the sky"
+  if (/fire|flame|smoke/i.test(imagePrompt)) fullPrompt += ", flames flicker and smoke rises"
+  if (/tree|forest|vegetation/i.test(imagePrompt)) fullPrompt += ", leaves and branches sway gently in the breeze"
 
   console.log(`Video ${index + 1}: sending to Kling`)
   const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
@@ -728,7 +765,7 @@ async function generateVoice(text, index) {
     headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json" },
     body: JSON.stringify({
       text,
-      model_id: "eleven_monolingual_v1",
+      model_id: "eleven_multilingual_v2",
       voice_settings: { stability: 0.5, similarity_boost: 0.75 }
     })
   })
@@ -741,17 +778,24 @@ async function generateVoice(text, index) {
 
 
 // ─────────────────────────────────────────
-// MUSIC
+// MUSIC — 3 options from Google Drive
 // ─────────────────────────────────────────
-async function downloadMusic() {
-  const driveUrl = process.env.MUSIC_DRIVE_URL
-  const match = driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || driveUrl.match(/id=([a-zA-Z0-9_-]+)/)
-  if (!match) throw new Error("MUSIC_DRIVE_URL invalid")
-  const res = await fetch(`https://drive.google.com/uc?export=download&id=${match[1]}&confirm=t`)
+const MUSIC_OPTIONS = [
+  { name: "Hopeful", id: "1Cw_QOTNCuImtn3miP4IQWUkhRsFhyCEU" },
+  { name: "Suspense", id: "1wU0OEEXca-ctc0EYWNeS6IL3pLO7p_jC" },
+  { name: "Space", id: "1CY8Fi1Mdz1RXO4QvwHrQDXa4UxS0dg4r" }
+]
+
+async function downloadMusicByChoice(choice) {
+  const music = MUSIC_OPTIONS[choice - 1]
+  if (!music) throw new Error(`Invalid music choice: ${choice}`)
+  const path = `/tmp/music_${music.name.toLowerCase()}.mp3`
+  if (fs.existsSync(path)) return path
+  const res = await fetch(`https://drive.google.com/uc?export=download&id=${music.id}&confirm=t`)
   if (!res.ok) throw new Error(`Music download failed: ${res.status}`)
   const buf = await res.buffer()
-  fs.writeFileSync("/tmp/music_raw.mp3", buf)
-  return "/tmp/music_raw.mp3"
+  fs.writeFileSync(path, buf)
+  return path
 }
 
 
@@ -788,10 +832,15 @@ function normalizeSize(input, output) {
   )
 }
 
-function getVoiceDelay(sceneIndex) {
+function getVoiceDelay(sceneIndex, pacing = "normal") {
   if (sceneIndex === 0) return 0.5
-  const group = Math.floor((sceneIndex - 1) / 3)
-  return group % 2 === 0 ? 1.0 : 2.0
+  switch (pacing) {
+    case "fast": return 0.5
+    case "normal": return 1.0
+    case "slow": return 1.5
+    case "dramatic": return 2.5
+    default: return 1.0
+  }
 }
 
 // Lip sync scenes: every 5 scenes starting at scene 3 (index 2, 7, 12, 17...)
@@ -820,11 +869,11 @@ function buildLipSyncScene(vidPath, voicePath, dur, i) {
   return out
 }
 
-function buildScene(vidPath, voicePath, dur, i) {
+function buildScene(vidPath, voicePath, dur, i, pacing = "normal") {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
 
-  const delay = getVoiceDelay(i)
+  const delay = getVoiceDelay(i, pacing)
   const totalAudioNeeded = dur + delay
   const videoDuration = getDuration(norm)
 
@@ -885,10 +934,14 @@ function concatChunks(paths) {
 
 function addMusicHD(vidPath, musicPath, dur) {
   const musicTrim = "/tmp/final/music_trim.mp3"
-  execSync(`ffmpeg -y -i "${musicPath}" -t ${dur} -af "volume=0.40" "${musicTrim}"`)
+  // Trim music to video duration with fade out in last 5 seconds
+  const fadeStart = Math.max(0, dur - 5)
+  execSync(`ffmpeg -y -i "${musicPath}" -t ${dur} -af "volume=0.35,afade=t=out:st=${fadeStart}:d=5" "${musicTrim}"`)
   const out = "/tmp/final/final_video.mp4"
+  // Simple ducking: music at 35% volume, voice at 100%, amix blends them
+  // The music fade-out handles the ending, voice naturally dominates during speech
   execSync(
-    `ffmpeg -y -i "${vidPath}" -i "${musicTrim}" -filter_complex "[0:a]volume=1.0[ex];[1:a]volume=0.40[mu];[ex][mu]amix=inputs=2:duration=first:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset slow -crf 18 -b:v 8M -maxrate 10M -bufsize 20M -c:a aac -b:a 192k -ar 44100 -movflags +faststart "${out}"`
+    `ffmpeg -y -i "${vidPath}" -i "${musicTrim}" -filter_complex "[0:a]volume=1.0[voice];[1:a]volume=1.0[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2:weights=1 0.4[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset slow -crf 18 -b:v 8M -maxrate 10M -bufsize 20M -c:a aac -b:a 192k -ar 44100 -movflags +faststart "${out}"`
   )
   return out
 }
@@ -898,8 +951,12 @@ function addMusicHD(vidPath, musicPath, dur) {
 // PROCESS ONE CHUNK (images → approval → videos → approval → build)
 // Returns a promise that resolves when chunk is fully approved
 // ─────────────────────────────────────────
-async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, visualSuggestion, globalSceneIndex, topic, rawScript) {
+async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, visualSuggestion, globalSceneIndex, topic, rawScript) {
   if (isStopped(chatId)) throw new Error("Stopped by user")
+
+  // sceneObjs = [{text, pacing}, ...]
+  const sceneTexts = sceneObjs.map(s => typeof s === "string" ? s : s.text)
+  const pacingTags = sceneObjs.map(s => typeof s === "string" ? "normal" : (s.pacing || "normal"))
 
   await bot.sendMessage(chatId, `📦 Chunk ${chunkIndex + 1}/${totalChunks} — ${sceneTexts.length} scenes`)
 
@@ -907,6 +964,9 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, 
   await bot.sendMessage(chatId, "🎬 Building scene prompts...")
   const scriptSummary = rawScript.slice(0, 800)
   const scenes = await buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex, topic, scriptSummary)
+
+  // Attach pacing to each scene
+  scenes.forEach((s, i) => { s.pacing = pacingTags[i] })
 
   // Generate images + lip sync videos
   await bot.sendMessage(chatId, `🖼 Generating images...`)
@@ -1263,10 +1323,11 @@ User feedback: ${feedback}`,
             chunkDuration += audioDuration
             scenePaths.push(buildLipSyncScene(videos[i], voicePath, audioDuration, absIdx))
           } else {
-            // Normal scene — with delay and SFX
-            const sceneDur = Math.max(TARGET_SCENE_SECONDS, audioDuration + getVoiceDelay(absIdx))
+            // Normal scene — with pacing-based delay and SFX
+            const pacing = scenes[i]?.pacing || "normal"
+            const sceneDur = Math.max(TARGET_SCENE_SECONDS, audioDuration + getVoiceDelay(absIdx, pacing))
             chunkDuration += sceneDur
-            scenePaths.push(buildScene(videos[i], voicePath, audioDuration, absIdx))
+            scenePaths.push(buildScene(videos[i], voicePath, audioDuration, absIdx, pacing))
           }
         }
 
@@ -1348,34 +1409,11 @@ User feedback: ${feedback}`,
       const nextGlobalIndex = globalSceneIndex + scenesInLastChunk
 
       if (nextChunk >= chunks.length) {
-        // ALL CHUNKS DONE — final assembly
-        try {
-          await bot.sendMessage(chatId, `🎬 All ${chunks.length} chunks complete! Total: ${totalDuration.toFixed(1)}s\n\nAssembling final video...`)
+        // ALL CHUNKS DONE — ask for music choice
+        const fullVideo = concatChunks(chunkPaths)
 
-          const fullVideo = concatChunks(chunkPaths)
-
-          let finalVideo = fullVideo
-          try {
-            await bot.sendMessage(chatId, "🎵 Adding music...")
-            const musicPath = await downloadMusic()
-            finalVideo = addMusicHD(fullVideo, musicPath, totalDuration)
-          } catch (e) {
-            await bot.sendMessage(chatId, "⚠️ Music failed — delivering without it")
-          }
-
-          await bot.sendVideo(chatId, finalVideo, {
-            width: 1280, height: 720,
-            caption: `🎬 Final ${chunks.length}-chunk video (${totalDuration.toFixed(1)}s)\n🎤 Voice 100% | 🔊 SFX 15% | 🎵 Music 40%`
-          })
-          await bot.sendDocument(chatId, finalVideo, { caption: `📁 HD file (YouTube-ready)` })
-
-          userState[chatId] = { step: "waiting_youtube_meta", topic, rawScript }
-          await bot.sendMessage(chatId, `✅ Video complete!\n\n📝 Want me to generate YouTube title, description, and tags?\n\nSend "yes" or "no"`)
-        } catch (err) {
-          console.error("Final assembly failed:", err)
-          await bot.sendMessage(chatId, `❌ Assembly failed: ${err.message}`)
-          userState[chatId] = {}
-        }
+        userState[chatId] = { step: "waiting_music_choice", topic, rawScript, fullVideo, totalDuration, chunkPaths }
+        await bot.sendMessage(chatId, `🎬 All ${chunks.length} chunks complete! Total: ${totalDuration.toFixed(1)}s\n\n🎵 Which music?\n\n1. Hopeful\n2. Suspense\n3. Space\n\nSend 1, 2, or 3`)
         return
       }
 
@@ -1394,6 +1432,35 @@ User feedback: ${feedback}`,
     }
 
     await bot.sendMessage(chatId, `Send "yes" to approve chunk and continue.`)
+    return
+  }
+
+  // ── Music choice ──
+  if (state.step === "waiting_music_choice") {
+    const choice = parseInt(text)
+    if (choice >= 1 && choice <= 3) {
+      const { topic, rawScript, fullVideo, totalDuration } = state
+      try {
+        const musicName = MUSIC_OPTIONS[choice - 1].name
+        await bot.sendMessage(chatId, `🎵 Adding ${musicName} music with ducking...`)
+        const musicPath = await downloadMusicByChoice(choice)
+        const finalVideo = addMusicHD(fullVideo, musicPath, totalDuration)
+
+        await bot.sendVideo(chatId, finalVideo, {
+          width: 1280, height: 720,
+          caption: `🎬 Final video (${totalDuration.toFixed(1)}s) | 🎵 ${musicName}\n🎤 Voice 100% | 🔊 SFX 15% | 🎵 Music (ducked)`
+        })
+        await bot.sendDocument(chatId, finalVideo, { caption: `📁 HD file (YouTube-ready)` })
+
+        userState[chatId] = { step: "waiting_youtube_meta", topic, rawScript }
+        await bot.sendMessage(chatId, `✅ Video complete!\n\n📝 Want me to generate YouTube title, description, and tags?\n\nSend "yes" or "no"`)
+      } catch (err) {
+        console.error("Music/assembly failed:", err)
+        await bot.sendMessage(chatId, `❌ Failed: ${err.message}\n\nTry again: send 1, 2, or 3`)
+      }
+      return
+    }
+    await bot.sendMessage(chatId, `🎵 Which music?\n\n1. Hopeful\n2. Suspense\n3. Space\n\nSend 1, 2, or 3`)
     return
   }
 
