@@ -536,7 +536,7 @@ function splitChunkIntoScenes(chunkText) {
 // ─────────────────────────────────────────
 // SCENE BREAKDOWN — build image prompts
 // ─────────────────────────────────────────
-async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex, referencePrompt) {
+async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex) {
   const userVisualNote = visualSuggestion ? `\nUser's visual direction: ${visualSuggestion}` : ""
   const scenes = []
 
@@ -546,27 +546,12 @@ async function buildScenePrompts(sceneTexts, style, visualSuggestion, globalScen
     const camera = absIndex === 0 ? OPENING_CAMERA : getCam(absIndex)
     const angle = absIndex === 0 ? OPENING_ANGLE : getAngle(absIndex)
 
-    let systemPrompt
-    if (!referencePrompt) {
-      systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
-IMPORTANT: Include PEOPLE or CHARACTERS in the scene — show them doing something relevant to the narration. Scenes with human subjects are more engaging.
+    const systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
+IMPORTANT: Include PEOPLE or CHARACTERS in the scene whenever the script mentions or implies their presence. Show them doing something relevant — exploring, working, reacting, observing. Each scene should have DIFFERENT poses and actions — avoid repetitive gestures like pointing. Only omit people if the script describes an empty uninhabited place.
 Describe: who is in the scene and what they're doing, the location, environment, objects, sky, light, time of day, colors, atmosphere.
-Also establish: clothing style, architecture style, technology level, color palette of the world.
 Be specific and cinematic.
 Camera angle: ${angle.prompt}.
 Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}`
-    } else {
-      systemPrompt = `Read this script line and write 100 words describing what this scene LOOKS LIKE visually.
-IMPORTANT: Include PEOPLE or CHARACTERS in the scene whenever the script mentions or implies their presence. Show them doing something relevant — exploring, working, reacting, observing. Only omit people if the script describes an empty uninhabited place.
-Describe: who is in the scene and what they're doing, the location, environment, objects, sky, light, time of day, colors, atmosphere.
-Be specific and cinematic.
-Camera angle: ${angle.prompt}.
-Visual style to apply: ${style.colorPalette}, ${style.lighting}, ${style.atmosphere}.${userVisualNote}
-
-CRITICAL — VISUAL CONSISTENCY: This scene MUST match the same visual world as this reference scene:
-"${referencePrompt}"
-Keep the SAME: clothing style, architecture style, technology level, color palette, material textures, time period, and overall aesthetic.`
-    }
 
     const imagePrompt = await callClaude(systemPrompt, `Script: "${script}"`, 400)
     const trimmedPrompt = imagePrompt.trim()
@@ -789,13 +774,18 @@ function buildLipSyncScene(vidPath, voicePath, dur, i) {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
 
-  // Trim video to exact audio duration — no padding, no delay
+  // Trim video to exact audio duration
   const trimmed = `/tmp/videos/trimmed_${i}.mp4`
   execSync(`ffmpeg -y -i "${norm}" -t ${dur} -c:v copy -an "${trimmed}"`)
 
-  // Mix video with voice only — no SFX, no fade
+  // Add slow zoom in effect during build stage
+  const zoomed = `/tmp/videos/zoomed_${i}.mp4`
+  const totalFrames = Math.round(dur * 30)
+  execSync(`ffmpeg -y -i "${trimmed}" -vf "zoompan=z='min(zoom+0.0006,1.03)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1280x720:fps=30" -an -c:v libx264 -preset fast -crf 18 "${zoomed}"`)
+
+  // Mix zoomed video with voice only — no SFX, no fade, no delay
   const out = `/tmp/final/scene_${i}.mp4`
-  execSync(`ffmpeg -y -i "${trimmed}" -i "${voicePath}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
+  execSync(`ffmpeg -y -i "${zoomed}" -i "${voicePath}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
   return out
 }
 
@@ -877,25 +867,21 @@ function addMusicHD(vidPath, musicPath, dur) {
 // PROCESS ONE CHUNK (images → approval → videos → approval → build)
 // Returns a promise that resolves when chunk is fully approved
 // ─────────────────────────────────────────
-async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, visualSuggestion, globalSceneIndex, referencePrompt) {
+async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, visualSuggestion, globalSceneIndex) {
   if (isStopped(chatId)) throw new Error("Stopped by user")
 
   await bot.sendMessage(chatId, `📦 Chunk ${chunkIndex + 1}/${totalChunks} — ${sceneTexts.length} scenes`)
 
   // Build scene prompts
   await bot.sendMessage(chatId, "🎬 Building scene prompts...")
-  const scenes = await buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex, referencePrompt)
+  const scenes = await buildScenePrompts(sceneTexts, style, visualSuggestion, globalSceneIndex)
 
-  // Set reference from first scene of first chunk
-  if (!referencePrompt && scenes.length > 0) {
-    referencePrompt = scenes[0].imagePrompt
-  }
-
-  // Generate all images (skip lip sync scenes)
+  // Generate images + lip sync videos
   await bot.sendMessage(chatId, `🖼 Generating images...`)
   const images = []
   const voices = []
   const lipSyncFlags = []
+  const lipSyncVideos = {} // pre-generated lip sync videos
 
   for (let i = 0; i < scenes.length; i++) {
     if (isStopped(chatId)) throw new Error("Stopped by user")
@@ -913,9 +899,14 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, 
       voices.push({ voicePath, audioDuration })
 
       if (isLipSync) {
-        // Lip sync scene — no image needed
+        // Lip sync scene — generate video immediately
         images.push(null)
-        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — YouTuber lip-sync (no image needed)`)
+        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — YouTuber lip-sync, generating now...`)
+        const faceIdx = getRandomFacePhoto()
+        const facePath = await downloadFacePhoto(faceIdx)
+        const vidPath = await generateLipSync(facePath, voicePath, absIdx, chatId)
+        lipSyncVideos[i] = vidPath
+        await bot.sendVideo(chatId, vidPath, { caption: `🎤 LipSync scene ${i + 1}` })
       } else {
         const img = await generateImage(s.imagePrompt, absIdx, chatId)
         images.push(img)
@@ -924,18 +915,16 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneTexts, style, 
       }
     } catch (err) {
       if (err.message === "Stopped by user") throw err
-      console.error(`Image ${i + 1} failed:`, err.message)
-      await bot.sendMessage(chatId, `⚠️ Image ${i + 1} failed: ${err.message}`)
+      console.error(`Scene ${i + 1} failed:`, err.message)
+      await bot.sendMessage(chatId, `⚠️ Scene ${i + 1} failed: ${err.message}`)
       images.push(null)
       voices.push(null)
     }
   }
 
   // Wait for image approval
-  userState[chatId] = { step: "waiting_chunk_image_approval", scenes, images, voices, lipSyncFlags, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt }
+  userState[chatId] = { step: "waiting_chunk_image_approval", scenes, images, voices, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion }
   await bot.sendMessage(chatId, `🖼 All images for chunk ${chunkIndex + 1} generated.\n\n✅ Send "yes" to approve\n🔄 Send "redo 2" or "redo 1,3" to regenerate`)
-
-  return { referencePrompt }
 }
 
 
@@ -1083,15 +1072,10 @@ bot.on("message", async msg => {
 
       await bot.sendMessage(chatId, `📦 Script split into ${chunks.length} chunks (~1 min each)\n\nStarting chunk 1...`)
 
-      userState[chatId] = { step: "processing_chunks", topic, rawScript, style, visualSuggestion, chunks, chunkPaths: [], currentChunk: 0, globalSceneIndex: 0, referencePrompt: "", totalDuration: 0 }
+      userState[chatId] = { step: "processing_chunks", topic, rawScript, style, visualSuggestion, chunks, chunkPaths: [], currentChunk: 0, globalSceneIndex: 0, totalDuration: 0 }
 
       try {
-        const result = await processChunk(chatId, 0, chunks.length, splitChunkIntoScenes(chunks[0]), style, visualSuggestion, 0, "")
-        // processChunk sets userState to waiting_chunk_image_approval
-        // Update reference prompt
-        if (result.referencePrompt) {
-          userState[chatId].referencePrompt = result.referencePrompt
-        }
+        await processChunk(chatId, 0, chunks.length, splitChunkIntoScenes(chunks[0]), style, visualSuggestion, 0)
       } catch (err) {
         if (err.message === "Stopped by user") return
         console.error("Chunk processing failed:", err)
@@ -1123,10 +1107,10 @@ Keep it dramatic and eye-catching for YouTube.`,
 
   // ── Chunk image approval ──
   if (state.step === "waiting_chunk_image_approval") {
-    const { scenes, images, voices, lipSyncFlags, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt } = state
+    const { scenes, images, voices, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion } = state
 
     if (/^yes$/i.test(text)) {
-      // Generate videos for this chunk
+      // Generate videos for this chunk (lip sync already done)
       try {
         await bot.sendMessage(chatId, `🎥 Generating videos for chunk ${chunkIndex + 1}...`)
         const videos = []
@@ -1136,17 +1120,11 @@ Keep it dramatic and eye-catching for YouTube.`,
           const absIdx = globalSceneIndex + i
 
           if (lipSyncFlags[i]) {
-            // LIP SYNC SCENE — use OmniHuman
-            try {
-              await bot.sendMessage(chatId, `🎤 Video ${i + 1}/${scenes.length} — YouTuber lip-sync...`)
-              const faceIdx = getRandomFacePhoto()
-              const facePath = await downloadFacePhoto(faceIdx)
-              const vidPath = await generateLipSync(facePath, voices[i].voicePath, absIdx, chatId)
-              videos.push(vidPath)
-              await bot.sendVideo(chatId, vidPath, { caption: `🎤 LipSync ${i + 1} of ${scenes.length}` })
-            } catch (err) {
-              if (err.message === "Stopped by user") { userState[chatId] = {}; return }
-              await bot.sendMessage(chatId, `⚠️ LipSync ${i + 1} failed: ${err.message}`)
+            // LIP SYNC — already generated, just use it
+            if (lipSyncVideos && lipSyncVideos[i]) {
+              videos.push(lipSyncVideos[i])
+              await bot.sendMessage(chatId, `🎤 Video ${i + 1}/${scenes.length} — lip-sync (already generated)`)
+            } else {
               videos.push(null)
             }
           } else {
@@ -1201,7 +1179,7 @@ Keep it dramatic and eye-catching for YouTube.`,
 
   // ── Chunk video approval ──
   if (state.step === "waiting_chunk_video_approval") {
-    const { scenes, images, voices, videos, lipSyncFlags, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, referencePrompt } = state
+    const { scenes, images, voices, videos, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion } = state
 
     if (/^yes$/i.test(text)) {
       try {
@@ -1295,7 +1273,7 @@ Keep it dramatic and eye-catching for YouTube.`,
   // ── Chunk built — approval to continue ──
   if (state.step === "waiting_chunk_approval") {
     if (/^yes$/i.test(text)) {
-      const { chunks, chunkPaths, currentChunk, globalSceneIndex, style, visualSuggestion, referencePrompt, totalDuration, topic, rawScript } = state
+      const { chunks, chunkPaths, currentChunk, globalSceneIndex, style, visualSuggestion, totalDuration, topic, rawScript } = state
       const nextChunk = (currentChunk || 0) + 1
       const scenesInLastChunk = splitChunkIntoScenes(chunks[currentChunk || 0]).length
       const nextGlobalIndex = globalSceneIndex + scenesInLastChunk
@@ -1337,7 +1315,7 @@ Keep it dramatic and eye-catching for YouTube.`,
         await bot.sendMessage(chatId, `\n📦 Starting chunk ${nextChunk + 1}/${chunks.length}...`)
         userState[chatId] = { ...state, currentChunk: nextChunk, globalSceneIndex: nextGlobalIndex }
 
-        await processChunk(chatId, nextChunk, chunks.length, splitChunkIntoScenes(chunks[nextChunk]), style, visualSuggestion, nextGlobalIndex, referencePrompt)
+        await processChunk(chatId, nextChunk, chunks.length, splitChunkIntoScenes(chunks[nextChunk]), style, visualSuggestion, nextGlobalIndex)
       } catch (err) {
         if (err.message === "Stopped by user") return
         await bot.sendMessage(chatId, `❌ Failed: ${err.message}`)
