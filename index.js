@@ -53,7 +53,55 @@ async function sendLongMessage(chatId, text) {
 }
 
 const stoppedChats = new Set()
-let userState = {}
+let _userState = {}
+
+// ─────────────────────────────────────────
+// STATE PERSISTENCE — survives restarts
+// ─────────────────────────────────────────
+const STATE_FILE = "/tmp/bot_state.json"
+let saveTimeout = null
+
+function saveState() {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ userState: _userState, stoppedChats: [...stoppedChats] }))
+  } catch (e) {
+    console.log("State save failed:", e.message)
+  }
+}
+
+function debouncedSave() {
+  if (saveTimeout) clearTimeout(saveTimeout)
+  saveTimeout = setTimeout(saveState, 1000)
+}
+
+function loadState() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"))
+      _userState = data.userState || {}
+      if (data.stoppedChats) data.stoppedChats.forEach(id => stoppedChats.add(id))
+      console.log(`State restored: ${Object.keys(_userState).length} active chats`)
+    }
+  } catch (e) {
+    console.log("State load failed:", e.message)
+  }
+}
+
+// Auto-save proxy — saves state whenever userState is modified
+const userState = new Proxy(_userState, {
+  set(target, prop, value) {
+    target[prop] = value
+    debouncedSave()
+    return true
+  },
+  deleteProperty(target, prop) {
+    delete target[prop]
+    debouncedSave()
+    return true
+  }
+})
+
+loadState()
 
 for (const d of ["/tmp/images", "/tmp/videos", "/tmp/voices", "/tmp/final", "/tmp/chunks"]) {
   fs.mkdirSync(d, { recursive: true })
