@@ -200,7 +200,7 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const faceUrl = await uploadToReplicate(facePath, "image/png")
 
   // Common description of the presenter — must match reference face
-  const presenterDesc = "beautiful woman around 30 years old with dark hair, green eyes, full lips, glowing skin, attractive and confident. No microphone. Medium close-up shot from waist up, facing the camera, natural relaxed pose, articulating with her hands while explaining"
+  const presenterDesc = "Portrait of a beautiful woman around 25 years old with dark hair, green eyes, full lips, glowing skin, attractive and confident. No microphone. Cropped at the waist, showing only upper body, chest, shoulders, and head. Camera frames her from the waist up only"
 
   let locationPrompt
   if (isStudio) {
@@ -453,7 +453,15 @@ async function generateFullScript(input) {
     `You are a professional YouTube scriptwriter. Create a detailed OUTLINE for a 10-minute narration video.
 
 Structure the outline as:
-HOOK (first 20 seconds): [describe the dramatic opening — must grab attention immediately]
+HOOK (first 20 seconds — THIS IS THE MOST IMPORTANT PART):
+- Open with ONE of these proven YouTube hook techniques:
+  1. SHOCKING STATEMENT: A bold, surprising claim that demands explanation ("The largest structure ever built was completed in just 16 months.")
+  2. INFORMATION GAP: Tell WHAT happened but withhold HOW or WHY ("In 1943, a secret was buried under the Virginia countryside that would change the world forever.")
+  3. IMPOSSIBLE QUESTION: Ask something that seems unanswerable ("What if the most powerful building on Earth was designed to be invisible?")
+  4. SENSORY OPENING: Drop the viewer into a vivid scene ("The ground shakes. Dust rises. Thousands of workers pour concrete at a pace never seen before.")
+  5. COUNTDOWN/STAKES: Create urgency ("They had 16 months. If they failed, the war could be lost.")
+- The hook must create TENSION and promise a PAYOFF
+
 CONTEXT (minutes 1-2): [set the scene, introduce the topic]
 DEEP DIVE (minutes 3-5): [main story, revelations, key facts — HIGH INTENSITY]
 TWIST (minutes 6-8): [unexpected angle, deeper mystery, emotional turn]
@@ -639,21 +647,22 @@ function splitScriptIntoChunks(script) {
 // ─────────────────────────────────────────
 async function splitChunkIntoScenes(chunkText) {
   const raw = await callClaude(
-    `Split this narration text into individual scenes for a video. Each scene will be spoken aloud (~5 seconds) and followed by a pause.
+    `Split this narration text into individual scenes for a video. Each scene will be spoken aloud (~4-6 seconds) and followed by a pause.
 
 RULES:
 - Each scene MUST be a COMPLETE thought that makes sense on its own
-- Each scene should be 8-12 words (about 5 seconds when spoken). This is critical for timing.
-- NEVER go over 15 words in a single scene
+- Each scene MUST be between 11 and 14 words. This is CRITICAL for video timing. NEVER go below 10 words. NEVER go above 15 words.
+- If a sentence is too short (under 11 words), combine it with the next sentence
+- If a sentence is too long (over 15 words), rephrase it into two scenes of 11-14 words each
 - NEVER cut a sentence in half — every scene must end at a period, question mark, or exclamation mark
-- If a sentence is too long (over 15 words), split it into two scenes by rephrasing slightly
+- You may slightly rephrase to hit the 11-14 word target while keeping the meaning
 - For each scene, assign a PACING tag based on the emotional intensity:
   "fast" = intense revelation, action (0.5s pause after)
   "normal" = standard narration (1s pause after)
   "slow" = emotional, reflective moment (1.5s pause after)
   "dramatic" = major revelation or cliffhanger (2.5s pause after)
 
-Return ONLY a JSON array of objects: [{"text": "scene text", "pacing": "normal"}, ...]
+Return ONLY a JSON array of objects: [{"text": "scene text here eleven to fourteen words long.", "pacing": "normal"}, ...]
 Return ONLY the JSON array, no other text`,
     chunkText,
     2000
@@ -839,7 +848,7 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      input: { start_image: klingImage, prompt: fullPrompt, duration: 5, aspect_ratio: "16:9", generate_audio: true }
+      input: { start_image: klingImage, prompt: fullPrompt, negative_prompt: "blurry, distorted, low quality, watermark, text overlay, logo, glitch, artifacts", duration: 5, aspect_ratio: "16:9", generate_audio: true }
     })
   })
   const pred = await res.json()
