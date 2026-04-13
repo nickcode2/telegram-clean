@@ -797,15 +797,29 @@ async function generateImage(prompt, index, chatId, retryCount = 0) {
     return { path, url: imageUrl }
   } catch (err) {
     // If flagged as sensitive, retry with sanitized prompt
-    if (err.message && /sensitive|flagged|E005|safety/i.test(err.message) && retryCount < 2) {
-      console.log(`Image ${index + 1} flagged as sensitive, sanitizing and retrying...`)
-      // Ask Claude to rewrite the prompt without anything that could trigger safety filters
-      const sanitized = await callClaude(
-        `This image prompt was flagged by a safety filter. Rewrite it to describe the SAME scene but remove any words that could trigger content filters (violence, weapons, military combat, blood, death, destruction, nudity, etc). Keep the same composition and camera angle. Keep it under 30 words. Write ONLY the new prompt.`,
-        `Flagged prompt: ${prompt}`,
-        100
-      )
-      return generateImage(sanitized.trim(), index, chatId, retryCount + 1)
+    if (err.message && /sensitive|flagged|E005|safety/i.test(err.message) && retryCount < 3) {
+      console.log(`Image ${index + 1} flagged as sensitive (attempt ${retryCount + 1}), sanitizing...`)
+      let sanitized
+      if (retryCount === 0) {
+        // First retry: just remove triggering words
+        sanitized = await callClaude(
+          `This image prompt was flagged by an AI safety filter. Rewrite it removing ALL potentially sensitive words: no violence, weapons, military, combat, blood, death, destruction, fire, explosion, crash, attack, war, burning, corpse, nude. Describe the same scene peacefully. Keep under 30 words. Write ONLY the new prompt.`,
+          `Flagged: ${prompt}`,
+          100
+        )
+      } else if (retryCount === 1) {
+        // Second retry: make it very generic and safe
+        sanitized = await callClaude(
+          `Write a completely SAFE 20-word image prompt about this general topic. No people, no conflict, no sensitive content. Just a beautiful landscape or architectural scene. Write ONLY the prompt.`,
+          `Topic context: ${prompt.slice(0, 50)}`,
+          100
+        )
+      } else {
+        // Third retry: ultra-safe fallback
+        sanitized = "Beautiful dramatic landscape, golden hour lighting, sweeping vista, cinematic composition, ultra realistic photograph"
+      }
+      const cleanPrompt = typeof sanitized === "string" ? sanitized.trim() : sanitized
+      return generateImage(cleanPrompt, index, chatId, retryCount + 1)
     }
     throw err
   }
@@ -1313,6 +1327,9 @@ Write ONLY the narration text. End with: Thanks for watching.`,
       const style = await generateVisualStyle(topic, rawScript)
       await bot.sendMessage(chatId, `🎨 ${style.styleTag} | ${style.mood}`)
 
+      // Store style in state immediately so we don't lose it
+      userState[chatId] = { step: "generating_thumbnail", topic, rawScript, style, visualSuggestion }
+
       // Generate thumbnail
       await bot.sendMessage(chatId, "🖼 Generating thumbnail...")
       const thumb = await generateThumbnail(topic, rawScript, style, chatId)
@@ -1322,8 +1339,41 @@ Write ONLY the narration text. End with: Thanks for watching.`,
       await bot.sendMessage(chatId, `✅ Send "yes" to approve thumbnail\n🔄 Describe changes you want (e.g. "make it darker" or "add more fire")`)
     } catch (err) {
       console.error("Style/thumbnail failed:", err)
-      await bot.sendMessage(chatId, `❌ Failed: ${err.message}\n\nSend 'do it' to try again.`)
-      userState[chatId] = {}
+      // Keep the state so user can retry
+      userState[chatId] = { ...userState[chatId], step: "waiting_thumbnail_retry", topic, rawScript, visualSuggestion, style: userState[chatId]?.style }
+      await bot.sendMessage(chatId, `⚠️ Thumbnail generation failed: ${err.message}\n\n🔄 Send "retry" to try again with a different prompt`)
+    }
+    return
+  }
+
+  // ── Thumbnail retry ──
+  if (state.step === "waiting_thumbnail_retry") {
+    const { topic, rawScript, style, visualSuggestion } = state
+
+    if (/^skip$/i.test(text)) {
+      // Skip thumbnail, go straight to chunk processing
+      const chunks = splitScriptIntoChunks(rawScript)
+      await bot.sendMessage(chatId, `⏭ Skipping thumbnail.\n\n📦 Script split into ${chunks.length} chunks (~1 min each)\n\nStarting chunk 1...`)
+      userState[chatId] = { step: "processing_chunks", topic, rawScript, style: style || {}, visualSuggestion, chunks, chunkPaths: [], currentChunk: 0, globalSceneIndex: 0, totalDuration: 0 }
+      try {
+        await processChunk(chatId, 0, chunks.length, await splitChunkIntoScenes(chunks[0]), style || {}, visualSuggestion, 0, topic, rawScript)
+      } catch (err) {
+        if (err.message === "Stopped by user") return
+        await bot.sendMessage(chatId, `❌ Failed: ${err.message}`)
+        userState[chatId] = {}
+      }
+      return
+    }
+
+    try {
+      await bot.sendMessage(chatId, "🖼 Retrying thumbnail with safer prompt...")
+      const thumb = await generateThumbnail(topic, rawScript, style || {}, chatId)
+      userState[chatId] = { step: "waiting_thumbnail_approval", topic, rawScript, style: style || {}, visualSuggestion, thumb }
+      await bot.sendDocument(chatId, thumb.path, { caption: "🎨 Thumbnail preview" })
+      await bot.sendMessage(chatId, `✅ Send "yes" to approve thumbnail\n🔄 Describe changes you want`)
+    } catch (err) {
+      userState[chatId] = { ...state, step: "waiting_thumbnail_retry" }
+      await bot.sendMessage(chatId, `⚠️ Still failing: ${err.message}\n\n🔄 Send "retry" to try again or "skip" to continue without thumbnail`)
     }
     return
   }
