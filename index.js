@@ -1161,10 +1161,10 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
       await bot.sendMessage(chatId, `📝 Scene ${i + 1} script:\n"${s.script}"`)
 
       if (isLipSync) {
-        // PRESENTER SCENE — generate with Lauren voice, Flux face image, OmniHuman lip sync + Kling SFX
+        // PRESENTER SCENE — generate image first, ask approval, then lip sync
         const isStudio = isStudioScene()
         const sceneType = isStudio ? "studio" : "location"
-        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — presenter (${sceneType}), generating...`)
+        await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — presenter (${sceneType}), generating image...`)
 
         // Generate presenter voice (Lauren)
         const voicePath = await generatePresenterVoice(s.script, absIdx)
@@ -1175,34 +1175,16 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
         const presenterImgPath = await generatePresenterImage(s.script, topic, isStudio, chatId)
         await bot.sendDocument(chatId, presenterImgPath, { caption: `📸 Presenter image (${sceneType})` })
 
-        // Generate Kling video for SFX audio (environment sounds)
-        let sfxVideoPath = null
-        try {
-          await bot.sendMessage(chatId, `🔊 Generating environment SFX...`)
-          const presenterImgUrl = await uploadToReplicate(presenterImgPath, "image/jpeg")
-          const sfxRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, construction sounds, machinery, wind, ambient environmental noise, birds, traffic", duration: 5, aspect_ratio: "16:9", generate_audio: true }
-            })
-          })
-          const sfxPred = await sfxRes.json()
-          if (sfxPred.id) {
-            const sfxResult = await withTimeout(pollReplicate(sfxPred.id, `SFX ${absIdx}`, chatId), `SFX ${absIdx}`)
-            const sfxUrl = Array.isArray(sfxResult.output) ? sfxResult.output[0] : sfxResult.output
-            sfxVideoPath = `/tmp/videos/presenter_sfx_${absIdx}.mp4`
-            fs.writeFileSync(sfxVideoPath, await (await fetch(sfxUrl)).buffer())
-          }
-        } catch (e) {
-          console.log(`Presenter SFX failed (non-critical): ${e.message}`)
-        }
-
-        // Generate lip sync (OmniHuman)
-        const vidPath = await generateLipSync(presenterImgPath, voicePath, absIdx, chatId)
-        lipSyncVideos[i] = { vidPath, sfxVideoPath }
+        // Save state and ask for approval before generating lip sync
         images.push(null)
-        await bot.sendVideo(chatId, vidPath, { caption: `🎤 Presenter scene ${i + 1}` })
+        userState[chatId] = {
+          step: "waiting_presenter_image_approval",
+          scenes, images, voices, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion,
+          presenterImgPath, presenterSceneIndex: i, presenterAbsIdx: absIdx, presenterIsStudio: isStudio,
+          topic, rawScript, remainingSceneStart: i + 1
+        }
+        await bot.sendMessage(chatId, `✅ Send "yes" to approve presenter image\n🔄 Send "redo" or "redo, suggestion here" to regenerate`)
+        return // Break out — will resume after user approves
       } else {
         // NORMAL SCENE — Ellis voice, Flux image
         const voicePath = await generateVoice(s.script, absIdx)
@@ -1416,6 +1398,118 @@ Keep it dramatic and eye-catching for YouTube.`,
       await bot.sendMessage(chatId, `✅ Send "yes" to approve or describe more changes`)
     } catch (err) {
       await bot.sendMessage(chatId, `⚠️ Thumbnail redo failed: ${err.message}\nTry again or send "yes" to continue`)
+    }
+    return
+  }
+
+  // ── Presenter image approval ──
+  if (state.step === "waiting_presenter_image_approval") {
+    const { scenes, images, voices, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, presenterImgPath, presenterSceneIndex, presenterAbsIdx, presenterIsStudio, topic, rawScript, remainingSceneStart } = state
+
+    if (/^yes$/i.test(text)) {
+      // Approved — generate lip sync + SFX, then continue remaining scenes
+      try {
+        await bot.sendMessage(chatId, `🎤 Generating presenter lip sync + SFX...`)
+        const i = presenterSceneIndex
+        const absIdx = presenterAbsIdx
+
+        // Generate SFX
+        let sfxVideoPath = null
+        try {
+          const presenterImgUrl = await uploadToReplicate(presenterImgPath, "image/jpeg")
+          const sfxRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, ambient environmental noise, wind, atmosphere", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+            })
+          })
+          const sfxPred = await sfxRes.json()
+          if (sfxPred.id) {
+            const sfxResult = await withTimeout(pollReplicate(sfxPred.id, `SFX ${absIdx}`, chatId), `SFX ${absIdx}`)
+            const sfxUrl = Array.isArray(sfxResult.output) ? sfxResult.output[0] : sfxResult.output
+            sfxVideoPath = `/tmp/videos/presenter_sfx_${absIdx}.mp4`
+            fs.writeFileSync(sfxVideoPath, await (await fetch(sfxUrl)).buffer())
+          }
+        } catch (e) { console.log(`SFX failed: ${e.message}`) }
+
+        // Generate lip sync
+        const vidPath = await generateLipSync(presenterImgPath, voices[i].voicePath, absIdx, chatId)
+        lipSyncVideos[i] = { vidPath, sfxVideoPath, isStudio: presenterIsStudio }
+        await bot.sendVideo(chatId, vidPath, { caption: `🎤 Presenter scene ${i + 1}` })
+
+        // Continue processing remaining scenes
+        for (let j = remainingSceneStart; j < scenes.length; j++) {
+          if (isStopped(chatId)) throw new Error("Stopped by user")
+          const s = scenes[j]
+          const absJ = globalSceneIndex + j
+          const isLipSync = isLipSyncScene(absJ)
+
+          await bot.sendMessage(chatId, `📝 Scene ${j + 1} script:\n"${s.script}"`)
+
+          if (isLipSync) {
+            // Another presenter scene — pause for approval again
+            const isStudio2 = isStudioScene()
+            const sceneType2 = isStudio2 ? "studio" : "location"
+            await bot.sendMessage(chatId, `🎤 Scene ${j + 1} — presenter (${sceneType2}), generating image...`)
+            const voicePath2 = await generatePresenterVoice(s.script, absJ)
+            const audioDuration2 = getDuration(voicePath2)
+            voices.push({ voicePath: voicePath2, audioDuration: audioDuration2 })
+            lipSyncFlags.push(true)
+            const presenterImgPath2 = await generatePresenterImage(s.script, topic, isStudio2, chatId)
+            await bot.sendDocument(chatId, presenterImgPath2, { caption: `📸 Presenter image (${sceneType2})` })
+            images.push(null)
+            userState[chatId] = {
+              step: "waiting_presenter_image_approval",
+              scenes, images, voices, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion,
+              presenterImgPath: presenterImgPath2, presenterSceneIndex: j, presenterAbsIdx: absJ, presenterIsStudio: isStudio2,
+              topic, rawScript, remainingSceneStart: j + 1
+            }
+            await bot.sendMessage(chatId, `✅ Send "yes" to approve presenter image\n🔄 Send "redo" or "redo, suggestion here" to regenerate`)
+            return
+          } else {
+            try {
+              const voicePath2 = await generateVoice(s.script, absJ)
+              const audioDuration2 = getDuration(voicePath2)
+              voices.push({ voicePath: voicePath2, audioDuration: audioDuration2 })
+              lipSyncFlags.push(false)
+              const img = await generateImage(s.imagePrompt, absJ, chatId)
+              images.push(img)
+              await bot.sendMessage(chatId, `🖼 Full image prompt:\n\n${s.imagePrompt}${REALISM_STYLE_SUFFIX}`)
+              await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${j + 1} of ${scenes.length}` })
+            } catch (err) {
+              if (err.message === "Stopped by user") throw err
+              await bot.sendMessage(chatId, `⚠️ Scene ${j + 1} failed: ${err.message}`)
+              images.push(null)
+              voices.push(null)
+              lipSyncFlags.push(false)
+            }
+          }
+        }
+
+        // All scenes done — wait for chunk image approval
+        userState[chatId] = { step: "waiting_chunk_image_approval", scenes, images, voices, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, topic, rawScript }
+        await bot.sendMessage(chatId, `🖼 All images for chunk ${chunkIndex + 1} generated.\n\n✅ Send "yes" to approve\n🔄 Send "redo 2" or "redo 1,3" to regenerate`)
+      } catch (err) {
+        if (err.message === "Stopped by user") return
+        await bot.sendMessage(chatId, `❌ Failed: ${err.message}`)
+      }
+      return
+    }
+
+    // Redo presenter image — with optional feedback
+    const feedback = text.replace(/^redo\s*/i, "").replace(/^,\s*/, "").trim()
+    try {
+      await bot.sendMessage(chatId, `🔄 Regenerating presenter image...`)
+      const newImgPath = await generatePresenterImage(
+        feedback ? `${scenes[presenterSceneIndex].script}. ${feedback}` : scenes[presenterSceneIndex].script,
+        topic, presenterIsStudio, chatId
+      )
+      await bot.sendDocument(chatId, newImgPath, { caption: `📸 Presenter image (redone)` })
+      userState[chatId] = { ...state, presenterImgPath: newImgPath }
+      await bot.sendMessage(chatId, `✅ Send "yes" to approve\n🔄 Send "redo" or "redo, suggestion" to regenerate`)
+    } catch (err) {
+      await bot.sendMessage(chatId, `⚠️ Redo failed: ${err.message}\n\nSend "redo" to try again or "yes" to skip`)
     }
     return
   }
@@ -1773,5 +1867,24 @@ User feedback: ${text}`,
       await bot.sendMessage(chatId, `⚠️ Failed: ${err.message}`)
     }
     return
+  }
+
+  // ── TYPO PROTECTION — unrecognized input, re-show current step options ──
+  const stepMessages = {
+    "waiting_input": `Send a theme, article link, or paste any text.`,
+    "waiting_script_approval": `✅ Send "ok" to continue\n🔄 "redo" for a new script\n💬 Or send feedback`,
+    "waiting_visual_suggestion": `🎨 Send visual suggestions or "none" to skip.`,
+    "waiting_thumbnail_approval": `✅ Send "yes" to approve thumbnail\n🔄 Describe changes you want`,
+    "waiting_thumbnail_retry": `🔄 Send "retry" to try again or "skip" to continue without thumbnail`,
+    "waiting_presenter_image_approval": `✅ Send "yes" to approve presenter image\n🔄 Send "redo" or "redo, suggestion" to regenerate`,
+    "waiting_chunk_image_approval": `✅ Send "yes" to approve\n🔄 Send "redo 2" or "redo 1,3" to regenerate`,
+    "waiting_chunk_video_approval": `✅ Send "yes" to approve\n🔄 Send "redo 2" or "redo 1,3" to regenerate`,
+    "waiting_chunk_approval": `✅ Send "yes" to approve chunk and continue`,
+    "waiting_music_choice": `🎵 Which music?\n\n1. Hopeful\n2. Suspense\n3. Space\n\nSend 1, 2, or 3`,
+    "waiting_youtube_meta": `📝 Send "yes" to generate YouTube metadata or "no" to skip`
+  }
+  const hint = stepMessages[state.step]
+  if (hint) {
+    await bot.sendMessage(chatId, `❓ Didn't understand "${text}"\n\n${hint}`)
   }
 })
