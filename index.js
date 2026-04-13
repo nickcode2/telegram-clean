@@ -167,7 +167,7 @@ function isStopped(chatId) { return stoppedChats.has(chatId) }
 // WOMAN PRESENTER
 // ─────────────────────────────────────────
 const PRESENTER_FACE_ID = "1oxbm7wh3MogxXI1j2rHF6fI9GQHht5Kq"
-const PRESENTER_VOICE_ID = "X1amM3LR8OIq8LP92VpO" // Lauren voice
+const PRESENTER_VOICE_ID = "dAlhI9qAHVIjXuVppzhW" // Enthusiastic presenter voice
 
 async function downloadPresenterFace() {
   const path = `/tmp/images/presenter_face.png`
@@ -200,7 +200,7 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const faceUrl = await uploadToReplicate(facePath, "image/png")
 
   // Common description of the presenter — must match reference face
-  const presenterDesc = "Portrait of a beautiful confident woman around 25 years old with dark hair, green eyes, full lips, glowing skin. No microphone. Looking directly at the camera with confident expression. Cropped at the waist, showing only upper body, chest, shoulders, and head. Arms relaxed at her sides"
+  const presenterDesc = "Portrait of a beautiful confident woman around 25 years old with dark hair, green eyes, full lips, glowing skin. No microphone. Looking directly at the camera with enthusiastic confident warm smile. Cropped at the waist, showing only upper body, chest, shoulders, and head. Arms relaxed at her sides"
 
   let locationPrompt
   if (isStudio) {
@@ -335,7 +335,7 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
       input: {
         image: imageUrl,
         audio: audioUrl,
-        prompt: "Confident woman speaking directly into camera with strong eye contact throughout. Arms mostly relaxed at sides with occasional small hand gestures that match her words then hands return down. Never holds arms up or out for extended time. Natural subtle head movements. Professional and assured delivery."
+        prompt: "Confident enthusiastic woman speaking directly into camera with bright engaged eye contact. Warm genuine smile between sentences. Arms mostly relaxed at sides with occasional small natural hand gestures then hands return down. Energetic but professional delivery. Never holds arms up or frozen."
       }
     })
   })
@@ -1492,7 +1492,9 @@ Keep it dramatic and eye-catching for YouTube.`,
         await bot.sendMessage(chatId, `🖼 All images for chunk ${chunkIndex + 1} generated.\n\n✅ Send "yes" to approve\n🔄 Send "redo 2" or "redo 1,3" to regenerate`)
       } catch (err) {
         if (err.message === "Stopped by user") return
-        await bot.sendMessage(chatId, `❌ Failed: ${err.message}`)
+        console.error("Presenter approval continuation failed:", err)
+        await bot.sendMessage(chatId, `⚠️ Failed: ${err.message}\n\nSend "yes" to retry from where it stopped`)
+        // Don't clear state — keep it so user can retry
       }
       return
     }
