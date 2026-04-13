@@ -200,7 +200,7 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const faceUrl = await uploadToReplicate(facePath, "image/png")
 
   // Common description of the presenter — must match reference face
-  const presenterDesc = "Portrait of a beautiful woman around 25 years old with dark hair, green eyes, full lips, glowing skin, attractive and confident. No microphone. Cropped at the waist, showing only upper body, chest, shoulders, and head. Camera frames her from the waist up only"
+  const presenterDesc = "Portrait of a beautiful confident woman around 25 years old with dark hair, green eyes, full lips, glowing skin. No microphone. Looking directly at the camera with confident expression. Cropped at the waist, showing only upper body, chest, shoulders, and head. Arms relaxed at her sides"
 
   let locationPrompt
   if (isStudio) {
@@ -335,7 +335,7 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
       input: {
         image: imageUrl,
         audio: audioUrl,
-        prompt: "Professional TV presenter speaking to camera. Natural body language that follows speech rhythm — hands move to emphasize key points then return to rest position. Subtle head nods and tilts. Arms relaxed, not frozen in one position. Occasional weight shifts. Confident but natural posture. Expressions change with the emotional content of speech."
+        prompt: "Confident woman speaking directly into camera with strong eye contact throughout. Arms mostly relaxed at sides with occasional small hand gestures that match her words then hands return down. Never holds arms up or out for extended time. Natural subtle head movements. Professional and assured delivery."
       }
     })
   })
@@ -1477,25 +1477,70 @@ Keep it dramatic and eye-catching for YouTube.`,
       try {
         for (const i of indices) {
           const absIdx = globalSceneIndex + i
-          let newPrompt = scenes[i].imagePrompt
-          if (feedback) {
-            // Ask Claude to modify the prompt based on feedback
-            newPrompt = await callClaude(
-              `Modify this image prompt based on user feedback. Keep it SHORT (20-30 words max). Write ONLY the new prompt.
-User feedback: ${feedback}`,
-              `Original prompt: ${scenes[i].imagePrompt}`,
-              100
+
+          if (lipSyncFlags[i]) {
+            // PRESENTER SCENE — redo image + lip sync video together
+            await bot.sendMessage(chatId, `🔄 Redoing presenter scene ${i + 1}...`)
+            const isStudio = (lipSyncVideos[i] && lipSyncVideos[i].isStudio) || false
+
+            // If feedback, modify the presenter prompt approach
+            if (feedback) {
+              await bot.sendMessage(chatId, `💬 Applying feedback: ${feedback}`)
+            }
+
+            // Regenerate presenter image
+            const presenterImgPath = await generatePresenterImage(
+              feedback ? `${scenes[i].script}. ${feedback}` : scenes[i].script,
+              state.topic || "", isStudio, chatId
             )
-            newPrompt = newPrompt.trim().replace(/^["']|["']$/g, "")
-            scenes[i].imagePrompt = newPrompt
-            await bot.sendMessage(chatId, `🖼 Updated prompt: ${newPrompt}`)
+            await bot.sendDocument(chatId, presenterImgPath, { caption: `📸 Presenter image ${i + 1} (redone)` })
+
+            // Regenerate lip sync video
+            const vidPath = await generateLipSync(presenterImgPath, voices[i].voicePath, absIdx, chatId)
+
+            // Generate SFX
+            let sfxVideoPath = null
+            try {
+              const presenterImgUrl = await uploadToReplicate(presenterImgPath, "image/jpeg")
+              const sfxRes = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, ambient environmental noise", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+                })
+              })
+              const sfxPred = await sfxRes.json()
+              if (sfxPred.id) {
+                const sfxResult = await withTimeout(pollReplicate(sfxPred.id, `SFX redo`, chatId), `SFX redo`)
+                const sfxUrl = Array.isArray(sfxResult.output) ? sfxResult.output[0] : sfxResult.output
+                sfxVideoPath = `/tmp/videos/presenter_sfx_redo_${absIdx}.mp4`
+                fs.writeFileSync(sfxVideoPath, await (await fetch(sfxUrl)).buffer())
+              }
+            } catch (e) { console.log(`Presenter SFX redo failed: ${e.message}`) }
+
+            lipSyncVideos[i] = { vidPath, sfxVideoPath, isStudio }
+            await bot.sendVideo(chatId, vidPath, { caption: `🎤 Presenter ${i + 1} (redone)` })
+          } else {
+            // NORMAL SCENE — redo image only
+            let newPrompt = scenes[i].imagePrompt
+            if (feedback) {
+              newPrompt = await callClaude(
+                `Modify this image prompt based on user feedback. Keep it SHORT (20-30 words max). Write ONLY the new prompt.
+User feedback: ${feedback}`,
+                `Original prompt: ${scenes[i].imagePrompt}`,
+                100
+              )
+              newPrompt = newPrompt.trim().replace(/^["']|["']$/g, "")
+              scenes[i].imagePrompt = newPrompt
+              await bot.sendMessage(chatId, `🖼 Updated prompt: ${newPrompt}`)
+            }
+            await bot.sendMessage(chatId, `🔄 Regenerating image ${i + 1}...`)
+            const img = await generateImage(newPrompt, absIdx, chatId)
+            images[i] = img
+            await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${i + 1} (redone)` })
           }
-          await bot.sendMessage(chatId, `🔄 Regenerating image ${i + 1}...`)
-          const img = await generateImage(newPrompt, absIdx, chatId)
-          images[i] = img
-          await bot.sendDocument(chatId, img.path, { caption: `📸 Image ${i + 1} (redone)` })
         }
-        userState[chatId] = { ...state, images, scenes }
+        userState[chatId] = { ...state, images, scenes, lipSyncVideos }
         await bot.sendMessage(chatId, `✅ Send "yes" to approve or "redo 2" to redo again`)
       } catch (err) {
         await bot.sendMessage(chatId, `⚠️ Redo failed: ${err.message}`)
