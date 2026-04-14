@@ -113,13 +113,20 @@ console.log("Bot running.")
 // 7 CAMERA TECHNIQUES (for Kling video motion)
 // ─────────────────────────────────────────
 const CAMERA_TECHNIQUES = [
-  { name: "Pan Tilt Down",   motion: "camera pans right and tilts down" },
-  { name: "Orbit",           motion: "camera orbits around" },
-  { name: "Orbit Push In",   motion: "camera orbits around and pushes in" },
-  { name: "Rotate Around",   motion: "the camera rotates around the subject" },
-  { name: "Follow Subject",  motion: "the camera follows the subject moving" },
-  { name: "Boom Up Push In", motion: "camera booms up and pushes in" },
-  { name: "Handheld",        motion: "handheld device filming" }
+  { name: "Pan Tilt Down",      motion: "camera pans right and tilts down with strong sweeping motion" },
+  { name: "Orbit",              motion: "camera orbits dynamically around the subject with energy" },
+  { name: "Orbit Push In",      motion: "camera orbits around while pushing in closer with intensity" },
+  { name: "Rotate Around",      motion: "camera rotates around the subject revealing new angles" },
+  { name: "Follow Subject",     motion: "camera actively follows the subject as they move through the scene" },
+  { name: "Boom Up Push In",    motion: "camera booms up dramatically and pushes in with cinematic sweep" },
+  { name: "Handheld Drift",     motion: "handheld camera with natural drift and subtle shake, raw documentary feel" },
+  { name: "Parallax Push",      motion: "camera pushes forward through the scene creating strong depth parallax, foreground and background move at different speeds" },
+  { name: "Crane Up",           motion: "camera cranes upward revealing the full scale of the scene from low to high" },
+  { name: "Pull Back Reveal",   motion: "camera starts close on a detail then pulls back dramatically to reveal the massive full scene" },
+  { name: "Tracking Left",      motion: "camera tracks laterally to the left alongside the scene with smooth steady motion" },
+  { name: "Whip Pan",           motion: "camera whip pans quickly across the scene with fast energetic motion" },
+  { name: "Dolly In Slow",      motion: "camera slowly dollies forward toward the subject building tension" },
+  { name: "Low Angle Push",     motion: "camera from low angle pushes forward and slightly upward, dramatic powerful perspective" }
 ]
 
 const OPENING_CAMERA = CAMERA_TECHNIQUES.find(c => c.name === "Boom Up Push In")
@@ -167,7 +174,7 @@ function isStopped(chatId) { return stoppedChats.has(chatId) }
 // WOMAN PRESENTER
 // ─────────────────────────────────────────
 const PRESENTER_FACE_ID = "1oxbm7wh3MogxXI1j2rHF6fI9GQHht5Kq"
-const PRESENTER_VOICE_ID = "dAlhI9qAHVIjXuVppzhW" // Enthusiastic presenter voice
+const PRESENTER_VOICE_ID = "X1amM3LR8OIq8LP92VpO" // Lauren - calm, clear, friendly
 
 async function downloadPresenterFace() {
   const path = `/tmp/images/presenter_face.png`
@@ -205,7 +212,7 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const faceUrl = await uploadToReplicate(facePath, "image/png")
 
   // Common description of the presenter — must match reference face
-  const presenterDesc = "Portrait of a beautiful confident woman around 25 years old with dark hair, green eyes, full lips, glowing skin. No microphone. Looking directly at the camera with enthusiastic confident warm smile. Cropped at the waist, showing only upper body, chest, shoulders, and head. Arms relaxed at her sides"
+  const presenterDesc = "Portrait of a beautiful confident woman around 25 years old with dark hair, green eyes, full lips, glowing skin. No microphone. Neutral composed serious expression like a professional news reporter. Both hands down at her sides. Cropped at the waist, showing only upper body, chest, shoulders, and head"
 
   let locationPrompt
   if (isStudio) {
@@ -340,7 +347,7 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
       input: {
         image: imageUrl,
         audio: audioUrl,
-        prompt: "Confident enthusiastic woman speaking directly into camera with bright engaged eye contact. Warm genuine smile between sentences. Arms mostly relaxed at sides with occasional small natural hand gestures then hands return down. Energetic but professional delivery. Never holds arms up or frozen."
+        prompt: "Professional reporter speaking directly into camera with steady eye contact. Neutral composed expression, serious and focused like a news reporter. Both hands down at her sides at all times. Subtle natural head movements only. No hand gestures. No smiling. Calm professional delivery."
       }
     })
   })
@@ -851,24 +858,26 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
   } catch {}
 
   const peopleWords = /\b(people|person|soldier|military|personnel|crowd|man|woman|figure|worker|officer|guard|child|group)\b/i
-  // Build a rich, specific motion prompt from the image content
-  let fullPrompt = `${motionPrompt}, premium documentary cinematography`
+  // Build a rich, dynamic motion prompt
+  let fullPrompt = `${motionPrompt}, premium documentary cinematography, dynamic and lively scene with visible motion throughout`
   if (peopleWords.test(imagePrompt)) {
-    fullPrompt += ", people visibly performing actions — walking, working, gesturing, interacting naturally, clothes and hair moving with wind"
+    fullPrompt += ", people actively moving — walking, turning, reaching, working, clothes and hair moving with wind, visible body motion"
   }
   // Add environmental motion based on scene content
-  if (/desert|sand|dust/i.test(imagePrompt)) fullPrompt += ", dust particles drift through the air, sand shifts"
-  if (/water|ocean|river|rain/i.test(imagePrompt)) fullPrompt += ", water flows and ripples naturally"
-  if (/sky|cloud/i.test(imagePrompt)) fullPrompt += ", clouds drift slowly across the sky"
-  if (/fire|flame|smoke/i.test(imagePrompt)) fullPrompt += ", flames flicker and smoke rises"
-  if (/tree|forest|vegetation/i.test(imagePrompt)) fullPrompt += ", leaves and branches sway gently in the breeze"
+  if (/desert|sand|dust/i.test(imagePrompt)) fullPrompt += ", dust particles swirl through the air, sand blows across the ground"
+  if (/water|ocean|river|rain/i.test(imagePrompt)) fullPrompt += ", water flows and splashes, waves move with energy"
+  if (/sky|cloud/i.test(imagePrompt)) fullPrompt += ", clouds move across the sky, light shifts"
+  if (/fire|flame|smoke/i.test(imagePrompt)) fullPrompt += ", flames dance and crackle, thick smoke billows upward"
+  if (/tree|forest|vegetation/i.test(imagePrompt)) fullPrompt += ", trees and branches sway in wind, leaves flutter"
+  if (/city|building|street/i.test(imagePrompt)) fullPrompt += ", traffic moves, flags wave, life in the streets"
+  if (/space|planet|mars/i.test(imagePrompt)) fullPrompt += ", atmospheric particles drift, terrain slowly shifts"
 
   console.log(`Video ${index + 1}: sending to Kling`)
   const res = await fetch("https://api.replicate.com/v1/models/kwaivgi/kling-v2.6/predictions", {
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      input: { start_image: klingImage, prompt: fullPrompt, negative_prompt: "blurry, distorted, low quality, watermark, text overlay, logo, glitch, artifacts, subtitles, captions, words, letters, labels", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+      input: { start_image: klingImage, prompt: fullPrompt, negative_prompt: "blurry, distorted, low quality, watermark, text overlay, logo, glitch, artifacts, subtitles, captions, words, letters, labels, human voice, speech, dialogue, talking, narration", duration: 5, aspect_ratio: "16:9", generate_audio: true }
     })
   })
   const pred = await res.json()
@@ -983,14 +992,7 @@ function normalizeSize(input, output) {
 }
 
 function getVoiceDelay(sceneIndex, pacing = "normal") {
-  if (sceneIndex === 0) return 0.5
-  switch (pacing) {
-    case "fast": return 0.5
-    case "normal": return 1.0
-    case "slow": return 1.5
-    case "dramatic": return 2.5
-    default: return 1.0
-  }
+  return 0.5 // Always 0.5s delay at start of every scene
 }
 
 // Lip sync scenes: every 5 scenes starting at scene 3 (index 2, 7, 12, 17...)
@@ -999,31 +1001,37 @@ function isLipSyncScene(globalSceneIndex) {
   return (globalSceneIndex - 2) % 5 === 0
 }
 
-// Build a lip sync scene — with SFX from original video, slow zoom, no voice delay
+// Build a lip sync scene — with SFX, slow zoom, 0.5s delay at start
 function buildLipSyncScene(vidPath, voicePath, dur, i, sfxVideoPath = null) {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
 
-  // Trim video to exact audio duration
+  // Total duration = 0.5s delay + audio duration
+  const totalDur = dur + 0.5
+
+  // Trim video to total duration
   const trimmed = `/tmp/videos/trimmed_${i}.mp4`
-  execSync(`ffmpeg -y -i "${norm}" -t ${dur} -c:v copy -an "${trimmed}"`)
+  execSync(`ffmpeg -y -i "${norm}" -t ${totalDur} -c:v copy -an "${trimmed}"`)
 
   // Add slow zoom in effect during build stage
   const zoomed = `/tmp/videos/zoomed_${i}.mp4`
-  const totalFrames = Math.round(dur * 30)
+  const totalFrames = Math.round(totalDur * 30)
   execSync(`ffmpeg -y -i "${trimmed}" -vf "zoompan=z='min(zoom+0.0006,1.03)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1280x720:fps=30" -an -c:v libx264 -preset fast -crf 18 "${zoomed}"`)
+
+  // Add 0.5s silence before voice
+  const delayedVoice = `/tmp/voices/presenter_delayed_${i}.mp3`
+  execSync(`ffmpeg -y -f lavfi -t 0.5 -i anullsrc=r=44100:cl=mono -i "${voicePath}" -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
 
   const out = `/tmp/final/scene_${i}.mp4`
 
-  // Try to mix with SFX from Kling video
+  // Try to mix with SFX from Kling video — filter out voices
   if (sfxVideoPath && fs.existsSync(sfxVideoPath)) {
     const sfxAudio = `/tmp/videos/lipsync_sfx_${i}.aac`
     try {
       execSync(`ffmpeg -y -i "${sfxVideoPath}" -vn -c:a aac -ar 44100 "${sfxAudio}"`)
       if (fs.existsSync(sfxAudio)) {
-        const sfxVol = 0.12
         execSync(
-          `ffmpeg -y -i "${zoomed}" -i "${voicePath}" -i "${sfxAudio}" -filter_complex "[2:a]volume=${sfxVol},afade=t=in:st=0:d=0.5,afade=t=out:st=${Math.max(0, dur - 1)}:d=1[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+          `ffmpeg -y -i "${zoomed}" -i "${delayedVoice}" -i "${sfxAudio}" -filter_complex "[2:a]lowpass=f=250,highpass=f=50,volume=0.12,afade=t=in:st=0:d=0.5,afade=t=out:st=${Math.max(0, totalDur - 1)}:d=1[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
         )
         return out
       }
@@ -1032,20 +1040,8 @@ function buildLipSyncScene(vidPath, voicePath, dur, i, sfxVideoPath = null) {
     }
   }
 
-  // Check if original lip sync video has audio
-  if (hasAudio(norm)) {
-    const sfxAudio = `/tmp/videos/lipsync_orig_sfx_${i}.aac`
-    try { execSync(`ffmpeg -y -i "${norm}" -vn -c:a aac -ar 44100 "${sfxAudio}"`) } catch {}
-    if (fs.existsSync(sfxAudio)) {
-      execSync(
-        `ffmpeg -y -i "${zoomed}" -i "${voicePath}" -i "${sfxAudio}" -filter_complex "[2:a]volume=0.12,afade=t=in:st=0:d=0.5,afade=t=out:st=${Math.max(0, dur - 1)}:d=1[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
-      )
-      return out
-    }
-  }
-
-  // Fallback: voice only
-  execSync(`ffmpeg -y -i "${zoomed}" -i "${voicePath}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
+  // Fallback: voice only with delay
+  execSync(`ffmpeg -y -i "${zoomed}" -i "${delayedVoice}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
   return out
 }
 
@@ -1074,19 +1070,17 @@ function buildScene(vidPath, voicePath, dur, i, pacing = "normal") {
   execSync(`ffmpeg -y -i "${prepared}" -t ${sceneDuration} -c:v copy -an "${trimmed}"`)
 
   const delayedVoice = `/tmp/voices/delayed_${i}.mp3`
-  if (i === 0) {
-    execSync(`ffmpeg -y -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -i "${voicePath}" -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
-  } else {
-    execSync(`ffmpeg -y -i "${voicePath}" -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
-  }
+  // Always put 0.5s silence BEFORE the voice
+  execSync(`ffmpeg -y -f lavfi -t ${delay} -i anullsrc=r=44100:cl=mono -i "${voicePath}" -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" -c:a libmp3lame -ar 44100 "${delayedVoice}"`)
 
   const out = `/tmp/final/scene_${i}.mp4`
   if (hasAudio(norm)) {
     const klingAudio = `/tmp/videos/kling_audio_${i}.aac`
     try { execSync(`ffmpeg -y -i "${norm}" -vn -c:a aac -ar 44100 "${klingAudio}"`) } catch {}
-    const sfxVol = detectVocalContent(norm) ? 0.10 : 0.15
+    // Filter out vocal frequencies (300-3000Hz) to keep only environment SFX, then set volume
+    const sfxVol = 0.12
     execSync(
-      `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -i "${klingAudio}" -filter_complex "[2:a]volume=${sfxVol},afade=t=in:st=0:d=1,afade=t=out:st=3:d=2[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+      `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -i "${klingAudio}" -filter_complex "[2:a]lowpass=f=250,highpass=f=50,volume=${sfxVol},afade=t=in:st=0:d=1,afade=t=out:st=3:d=2[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
     )
   } else {
     execSync(`ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
@@ -1428,7 +1422,7 @@ Keep it dramatic and eye-catching for YouTube.`,
             method: "POST",
             headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
             body: JSON.stringify({
-              input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, ambient environmental noise, wind, atmosphere", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+              input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, only environmental sounds, wind, machinery, nature, no human voices, no speech", negative_prompt: "human voice, speech, dialogue, talking, narration", duration: 5, aspect_ratio: "16:9", generate_audio: true }
             })
           })
           const sfxPred = await sfxRes.json()
@@ -1609,7 +1603,7 @@ Keep it dramatic and eye-catching for YouTube.`,
                 method: "POST",
                 headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, ambient environmental noise", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+                  input: { start_image: presenterImgUrl, prompt: "camera slowly pans across the scene, only environmental sounds, wind, machinery, nature, no human voices", negative_prompt: "human voice, speech, dialogue, talking", duration: 5, aspect_ratio: "16:9", generate_audio: true }
                 })
               })
               const sfxPred = await sfxRes.json()
