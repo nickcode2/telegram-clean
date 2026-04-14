@@ -186,10 +186,15 @@ function resetPresenterState() {
   presenterAppearanceCount = 0
   presenterOutfit = ""
 }
-function isStudioScene() {
-  const inGroup = presenterAppearanceCount % 4
+function getPresenterSceneType() {
+  // Check what the CURRENT scene type is without advancing
+  return presenterAppearanceCount % 4 === 3 ? "studio" : "location"
+}
+function isCurrentStudio() {
+  return presenterAppearanceCount % 4 === 3
+}
+function advancePresenterCounter() {
   presenterAppearanceCount++
-  return inGroup === 3 // 4th appearance = studio
 }
 
 // First outfit is locked for all location scenes
@@ -569,7 +574,7 @@ Return ONLY valid JSON — no markdown:
 
 const THUMBNAIL_STYLE_SUFFIX = `
 Photorealistic photograph, super high definition, ultra sharp detail. High contrast with vibrant saturated colors that pop and catch the eye. Bold dramatic lighting. Every detail is crisp and clear even at small sizes. Image demands attention and makes people want to click.
-Everything in the image must be physically possible and make sense in the real world. No fantasy elements, no impossible physics, no duplicated objects, no magical effects. The drama comes from the real moment, not from adding impossible elements.`
+Everything in the image must be physically possible and make sense in the real world. No fantasy elements, no impossible physics, no duplicated objects, no magical effects. The drama comes from the real moment, not from adding impossible elements. No text, no words, no titles, no labels anywhere in the image.`
 
 
 // ─────────────────────────────────────────
@@ -724,6 +729,7 @@ RULES:
 - Each scene MUST show a DIFFERENT subject, location, or moment than previous scenes
 - Keep it under 30 words
 - AVOID words that trigger AI safety filters: no gore, blood, death, weapons being fired, corpses, nudity, graphic violence. Describe scenes in a documentary tone.
+- NEVER include any text, words, subtitles, captions, or labels in the image. The image must be purely visual with zero text.
 - Style: ${style.mood}.${userVisualNote}
 - Write ONLY the prompt, nothing else`
 
@@ -749,7 +755,7 @@ RULES:
 // REALISM STYLE — appended to every image prompt
 // ─────────────────────────────────────────
 const REALISM_STYLE_SUFFIX = `
-Photorealistic photograph with natural imperfections: slight sensor noise, subtle focus variation, real-world micro-details. Materials and surfaces look physically real — touched, used, existing in the real world. Overall image feels like a candid moment captured by someone who was actually there.`
+Photorealistic photograph with natural imperfections: slight sensor noise, subtle focus variation, real-world micro-details. Materials and surfaces look physically real — touched, used, existing in the real world. Overall image feels like a candid moment captured by someone who was actually there. No text, no words, no subtitles, no captions, no labels, no watermarks anywhere in the image.`
 
 
 // ─────────────────────────────────────────
@@ -862,7 +868,7 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
     method: "POST",
     headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      input: { start_image: klingImage, prompt: fullPrompt, negative_prompt: "blurry, distorted, low quality, watermark, text overlay, logo, glitch, artifacts", duration: 5, aspect_ratio: "16:9", generate_audio: true }
+      input: { start_image: klingImage, prompt: fullPrompt, negative_prompt: "blurry, distorted, low quality, watermark, text overlay, logo, glitch, artifacts, subtitles, captions, words, letters, labels", duration: 5, aspect_ratio: "16:9", generate_audio: true }
     })
   })
   const pred = await res.json()
@@ -1162,7 +1168,7 @@ async function processChunk(chatId, chunkIndex, totalChunks, sceneObjs, style, v
 
       if (isLipSync) {
         // PRESENTER SCENE — generate image first, ask approval, then lip sync
-        const isStudio = isStudioScene()
+        const isStudio = isCurrentStudio()
         const sceneType = isStudio ? "studio" : "location"
         await bot.sendMessage(chatId, `🎤 Scene ${i + 1} — presenter (${sceneType}), generating image...`)
 
@@ -1407,7 +1413,8 @@ Keep it dramatic and eye-catching for YouTube.`,
     const { scenes, images, voices, lipSyncFlags, lipSyncVideos, globalSceneIndex, chunkIndex, totalChunks, style, visualSuggestion, presenterImgPath, presenterSceneIndex, presenterAbsIdx, presenterIsStudio, topic, rawScript, remainingSceneStart } = state
 
     if (/^yes$/i.test(text)) {
-      // Approved — generate lip sync + SFX, then continue remaining scenes
+      // Approved — advance counter, generate lip sync + SFX, then continue remaining scenes
+      advancePresenterCounter()
       try {
         await bot.sendMessage(chatId, `🎤 Generating presenter lip sync + SFX...`)
         const i = presenterSceneIndex
@@ -1449,7 +1456,7 @@ Keep it dramatic and eye-catching for YouTube.`,
 
           if (isLipSync) {
             // Another presenter scene — pause for approval again
-            const isStudio2 = isStudioScene()
+            const isStudio2 = isCurrentStudio()
             const sceneType2 = isStudio2 ? "studio" : "location"
             await bot.sendMessage(chatId, `🎤 Scene ${j + 1} — presenter (${sceneType2}), generating image...`)
             const voicePath2 = await generatePresenterVoice(s.script, absJ)
