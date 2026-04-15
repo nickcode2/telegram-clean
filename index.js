@@ -113,23 +113,23 @@ console.log("Bot running.")
 // 7 CAMERA TECHNIQUES (for Kling video motion)
 // ─────────────────────────────────────────
 const CAMERA_TECHNIQUES = [
-  { name: "Pan Tilt Down",      motion: "camera pans right and tilts down with strong sweeping motion" },
-  { name: "Orbit",              motion: "camera orbits dynamically around the subject with energy" },
-  { name: "Orbit Push In",      motion: "camera orbits around while pushing in closer with intensity" },
-  { name: "Rotate Around",      motion: "camera rotates around the subject revealing new angles" },
-  { name: "Follow Subject",     motion: "camera actively follows the subject as they move through the scene" },
-  { name: "Boom Up Push In",    motion: "camera booms up dramatically and pushes in with cinematic sweep" },
-  { name: "Handheld Drift",     motion: "handheld camera with natural drift and subtle shake, raw documentary feel" },
-  { name: "Parallax Push",      motion: "camera pushes forward through the scene creating strong depth parallax, foreground and background move at different speeds" },
-  { name: "Crane Up",           motion: "camera cranes upward revealing the full scale of the scene from low to high" },
-  { name: "Pull Back Reveal",   motion: "camera starts close on a detail then pulls back dramatically to reveal the massive full scene" },
-  { name: "Tracking Left",      motion: "camera tracks laterally to the left alongside the scene with smooth steady motion" },
-  { name: "Whip Pan",           motion: "camera whip pans quickly across the scene with fast energetic motion" },
-  { name: "Dolly In Slow",      motion: "camera slowly dollies forward toward the subject building tension" },
-  { name: "Low Angle Push",     motion: "camera from low angle pushes forward and slightly upward, dramatic powerful perspective" }
+  { name: "Slow Pan Right",     motion: "camera slowly pans right with smooth controlled motion" },
+  { name: "Orbit",              motion: "camera slowly orbits around the subject" },
+  { name: "Orbit Push In",      motion: "camera slowly orbits while gently pushing in closer" },
+  { name: "Gentle Rotate",      motion: "camera gently rotates around the subject revealing the scene" },
+  { name: "Follow Subject",     motion: "camera smoothly follows the subject as they move" },
+  { name: "Boom Up",            motion: "camera smoothly rises upward revealing more of the scene" },
+  { name: "Handheld Drift",     motion: "subtle handheld camera drift with gentle natural movement" },
+  { name: "Parallax Push",      motion: "camera pushes slowly forward, foreground and background separate with depth" },
+  { name: "Crane Up",           motion: "camera slowly cranes upward from low showing the full scene" },
+  { name: "Tracking Left",      motion: "camera tracks smoothly to the left alongside the scene" },
+  { name: "Dolly In",           motion: "camera slowly dollies forward toward the subject" },
+  { name: "Low Angle Rise",     motion: "camera from low angle slowly rises upward with power" },
+  { name: "Slow Pan Left",      motion: "camera slowly pans left with controlled steady motion" },
+  { name: "Push In Close",      motion: "camera steadily pushes in from medium to close-up on the subject" }
 ]
 
-const OPENING_CAMERA = CAMERA_TECHNIQUES.find(c => c.name === "Boom Up Push In")
+const OPENING_CAMERA = CAMERA_TECHNIQUES.find(c => c.name === "Boom Up")
 const getCam = i => CAMERA_TECHNIQUES[i % CAMERA_TECHNIQUES.length]
 
 
@@ -842,10 +842,11 @@ async function generateImage(prompt, index, chatId, retryCount = 0) {
 // ─────────────────────────────────────────
 // VIDEO GENERATION (Kling v2.6)
 // ─────────────────────────────────────────
-async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, index, chatId) {
+async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, index, chatId, retryCount = 0) {
   if (chatId && isStopped(chatId)) throw new Error("Stopped by user")
 
-  let klingImage = imageUrl
+  // Always use base64 from local file to avoid URL expiry issues
+  let klingImage
   try {
     const dims = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${imagePath}"`).toString().trim()
     const [w, h] = dims.split(",").map(Number)
@@ -854,8 +855,12 @@ async function generateVideo(imageUrl, imagePath, motionPrompt, imagePrompt, ind
       const resizedPath = `/tmp/images/img_${index}_16x9.jpg`
       execSync(`ffmpeg -y -i "${imagePath}" -vf "scale=1344:768:force_original_aspect_ratio=decrease,pad=1344:768:(ow-iw)/2:(oh-ih)/2" -q:v 4 "${resizedPath}"`)
       klingImage = `data:image/jpeg;base64,${fs.readFileSync(resizedPath).toString("base64")}`
+    } else {
+      klingImage = `data:image/jpeg;base64,${fs.readFileSync(imagePath).toString("base64")}`
     }
-  } catch {}
+  } catch {
+    klingImage = `data:image/jpeg;base64,${fs.readFileSync(imagePath).toString("base64")}`
+  }
 
   const peopleWords = /\b(people|person|soldier|military|personnel|crowd|man|woman|figure|worker|officer|guard|child|group)\b/i
   // Build a rich, dynamic motion prompt
@@ -1223,12 +1228,206 @@ bot.onText(/^do it$/i, msg => {
 
 
 // ─────────────────────────────────────────
+// TEST ALL — diagnostic test of every pipeline step
+// ─────────────────────────────────────────
+bot.onText(/^test all$/i, async msg => {
+  const chatId = msg.chat.id
+  stoppedChats.delete(chatId)
+  resetPresenterState()
+  userState[chatId] = { step: "testing" }
+
+  const results = []
+  const pass = (name) => { results.push(`✅ ${name}`); return true }
+  const fail = (name, err) => { results.push(`❌ ${name}: ${err}`); return false }
+
+  await bot.sendMessage(chatId, `🧪 Starting full pipeline test...\nThis will test every step without generating a full video.\n\n⏱ Estimated time: 10-15 minutes`)
+
+  const testTopic = "The mystery of the Bermuda Triangle"
+  const testScript = "Ships vanish without a trace in these waters. For decades, the Bermuda Triangle has claimed hundreds of vessels and aircraft. Scientists and conspiracy theorists alike have searched for answers in this deadly stretch of ocean."
+  const testScene = "Ships vanish without a trace in these deadly waters."
+
+  // 1. CLAUDE — Script outline
+  try {
+    await bot.sendMessage(chatId, `🧪 1/14 Testing Claude script outline...`)
+    const outline = await callClaude("Write a 3-sentence outline for a YouTube video about this topic.", testTopic, 200)
+    await bot.sendMessage(chatId, `📝 Outline: ${outline.slice(0, 200)}`)
+    pass("Claude script outline")
+  } catch (e) { fail("Claude script outline", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 2. FLUX — Scene image
+  let sceneImgPath = null, sceneImgUrl = null
+  try {
+    await bot.sendMessage(chatId, `🧪 2/14 Testing Flux scene image...`)
+    const img = await generateImage("Wide establishing shot. A cargo ship in rough ocean waters during a storm. Dark clouds, massive waves. Dramatic lighting.", 0, chatId)
+    sceneImgPath = img.path
+    sceneImgUrl = img.url
+    await bot.sendDocument(chatId, img.path, { caption: "📸 Test scene image" })
+    pass("Flux scene image")
+  } catch (e) { fail("Flux scene image", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 3. FLUX — Thumbnail
+  try {
+    await bot.sendMessage(chatId, `🧪 3/14 Testing Flux thumbnail...`)
+    const thumb = await generateImage("A massive ship sinking in dark stormy ocean, dramatic golden light breaking through clouds, high contrast, ultra sharp. No text.", 999, chatId)
+    await bot.sendDocument(chatId, thumb.path, { caption: "📸 Test thumbnail" })
+    pass("Flux thumbnail")
+  } catch (e) { fail("Flux thumbnail", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 4. FLUX — Presenter image (location)
+  let presenterImgPath = null
+  try {
+    await bot.sendMessage(chatId, `🧪 4/14 Testing Flux presenter image (location)...`)
+    presenterImgPath = await generatePresenterImage(testScene, testTopic, false, chatId)
+    await bot.sendDocument(chatId, presenterImgPath, { caption: "📸 Test presenter (location)" })
+    pass("Flux presenter image (location)")
+  } catch (e) { fail("Flux presenter image (location)", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 5. FLUX — Presenter image (studio)
+  try {
+    await bot.sendMessage(chatId, `🧪 5/14 Testing Flux presenter image (studio)...`)
+    const studioImg = await generatePresenterImage(testScene, testTopic, true, chatId)
+    await bot.sendDocument(chatId, studioImg, { caption: "📸 Test presenter (studio)" })
+    pass("Flux presenter image (studio)")
+  } catch (e) { fail("Flux presenter image (studio)", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 6. ELEVENLABS — Narrator voice (Ellis)
+  let narratorVoicePath = null
+  try {
+    await bot.sendMessage(chatId, `🧪 6/14 Testing ElevenLabs narrator voice...`)
+    narratorVoicePath = await generateVoice(testScene, 0)
+    const dur = getDuration(narratorVoicePath)
+    await bot.sendMessage(chatId, `🎤 Narrator voice: ${dur.toFixed(1)}s`)
+    pass("ElevenLabs narrator (Ellis)")
+  } catch (e) { fail("ElevenLabs narrator (Ellis)", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 7. ELEVENLABS — Presenter voice (Lauren)
+  let presenterVoicePath = null
+  try {
+    await bot.sendMessage(chatId, `🧪 7/14 Testing ElevenLabs presenter voice...`)
+    presenterVoicePath = await generatePresenterVoice(testScene, 0)
+    const dur = getDuration(presenterVoicePath)
+    await bot.sendMessage(chatId, `🎤 Presenter voice: ${dur.toFixed(1)}s`)
+    pass("ElevenLabs presenter (Lauren)")
+  } catch (e) { fail("ElevenLabs presenter (Lauren)", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 8. KLING — Scene video
+  let sceneVideoPath = null
+  try {
+    if (sceneImgPath) {
+      await bot.sendMessage(chatId, `🧪 8/14 Testing Kling scene video...`)
+      sceneVideoPath = await generateVideo(sceneImgUrl, sceneImgPath, "camera slowly orbits around the subject", "ship ocean storm waves", 0, chatId)
+      await bot.sendVideo(chatId, sceneVideoPath, { caption: "🎬 Test scene video" })
+      pass("Kling scene video")
+    } else { fail("Kling scene video", "No scene image to use") }
+  } catch (e) { fail("Kling scene video", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 9. OMNIHUMAN — Lip sync
+  let lipSyncPath = null
+  try {
+    if (presenterImgPath && presenterVoicePath) {
+      await bot.sendMessage(chatId, `🧪 9/14 Testing OmniHuman lip sync...`)
+      lipSyncPath = await generateLipSync(presenterImgPath, presenterVoicePath, 0, chatId)
+      await bot.sendVideo(chatId, lipSyncPath, { caption: "🎤 Test lip sync" })
+      pass("OmniHuman lip sync")
+    } else { fail("OmniHuman lip sync", "No presenter image or voice") }
+  } catch (e) { fail("OmniHuman lip sync", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 10. FFMPEG — Build normal scene
+  let builtScenePath = null
+  try {
+    if (sceneVideoPath && narratorVoicePath) {
+      await bot.sendMessage(chatId, `🧪 10/14 Testing FFmpeg normal scene build...`)
+      const dur = getDuration(narratorVoicePath)
+      builtScenePath = buildScene(sceneVideoPath, narratorVoicePath, dur, 0, "normal")
+      await bot.sendVideo(chatId, builtScenePath, { caption: "🎬 Test built scene (voice + SFX + delay)" })
+      pass("FFmpeg normal scene build")
+    } else { fail("FFmpeg normal scene build", "No video or voice") }
+  } catch (e) { fail("FFmpeg normal scene build", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 11. FFMPEG — Build presenter scene
+  let builtPresenterPath = null
+  try {
+    if (lipSyncPath && presenterVoicePath) {
+      await bot.sendMessage(chatId, `🧪 11/14 Testing FFmpeg presenter scene build...`)
+      const dur = getDuration(presenterVoicePath)
+      builtPresenterPath = buildLipSyncScene(lipSyncPath, presenterVoicePath, dur, 1, null)
+      await bot.sendVideo(chatId, builtPresenterPath, { caption: "🎬 Test built presenter scene (zoom + voice)" })
+      pass("FFmpeg presenter scene build")
+    } else { fail("FFmpeg presenter scene build", "No lip sync or voice") }
+  } catch (e) { fail("FFmpeg presenter scene build", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 12. FFMPEG — Concat scenes
+  let concatPath = null
+  try {
+    if (builtScenePath && builtPresenterPath) {
+      await bot.sendMessage(chatId, `🧪 12/14 Testing FFmpeg concat...`)
+      concatPath = concatScenes([builtScenePath, builtPresenterPath])
+      await bot.sendVideo(chatId, concatPath, { caption: "🎬 Test concat (2 scenes)" })
+      pass("FFmpeg concat")
+    } else { fail("FFmpeg concat", "No built scenes") }
+  } catch (e) { fail("FFmpeg concat", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 13. MUSIC — Download
+  let musicPath = null
+  try {
+    await bot.sendMessage(chatId, `🧪 13/14 Testing music download (Hopeful)...`)
+    musicPath = await downloadMusicByChoice(1)
+    pass("Music download")
+  } catch (e) { fail("Music download", e.message) }
+
+  if (isStopped(chatId)) { await bot.sendMessage(chatId, "⛔ Test stopped."); return }
+
+  // 14. FFMPEG — Music mix
+  try {
+    if (concatPath && musicPath) {
+      await bot.sendMessage(chatId, `🧪 14/14 Testing FFmpeg music mix + ducking + fade...`)
+      const totalDur = getDuration(concatPath)
+      const finalPath = addMusicHD(concatPath, musicPath, totalDur)
+      await bot.sendVideo(chatId, finalPath, { caption: "🎬 Test final (music + ducking + fade)" })
+      await bot.sendDocument(chatId, finalPath, { caption: "📁 Test final HD file" })
+      pass("FFmpeg music mix")
+    } else { fail("FFmpeg music mix", "No concat or music") }
+  } catch (e) { fail("FFmpeg music mix", e.message) }
+
+  // RESULTS
+  const passed = results.filter(r => r.startsWith("✅")).length
+  const failed = results.filter(r => r.startsWith("❌")).length
+  await bot.sendMessage(chatId, `\n🧪 TEST COMPLETE\n\n${results.join("\n")}\n\n✅ Passed: ${passed}/14\n❌ Failed: ${failed}/14\n\nSend "do it" to start a real video.`)
+  userState[chatId] = {}
+})
+
+
+// ─────────────────────────────────────────
 // MAIN MESSAGE HANDLER
 // ─────────────────────────────────────────
 bot.on("message", async msg => {
   const chatId = msg.chat.id
   const text = (msg.text || "").trim()
-  if (/^do it$/i.test(text) || /^stop$/i.test(text)) return
+  if (/^do it$/i.test(text) || /^stop$/i.test(text) || /^test all$/i.test(text)) return
 
   const state = userState[chatId]
   if (!state) return
@@ -1550,8 +1749,18 @@ Keep it dramatic and eye-catching for YouTube.`,
               await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} of ${scenes.length}` })
             } catch (err) {
               if (err.message === "Stopped by user") { userState[chatId] = {}; return }
-              await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed: ${err.message}`)
-              videos.push(null)
+              // Auto-retry once
+              console.log(`Video ${i + 1} failed, retrying: ${err.message}`)
+              await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed, retrying...`)
+              try {
+                const vidPath = await generateVideo(images[i].url, images[i].path, scenes[i].motion, scenes[i].imagePrompt, absIdx, chatId)
+                videos.push(vidPath)
+                await bot.sendVideo(chatId, vidPath, { caption: `🎬 Video ${i + 1} of ${scenes.length} (retry)` })
+              } catch (err2) {
+                if (err2.message === "Stopped by user") { userState[chatId] = {}; return }
+                await bot.sendMessage(chatId, `⚠️ Video ${i + 1} failed again: ${err2.message}`)
+                videos.push(null)
+              }
             }
           }
         }
