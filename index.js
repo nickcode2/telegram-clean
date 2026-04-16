@@ -212,21 +212,21 @@ async function generatePresenterImage(script, topic, isStudio, chatId) {
   const faceUrl = await uploadToReplicate(facePath, "image/png")
 
   // Common description of the presenter — must match reference face
-  const presenterDesc = "Portrait of a beautiful confident woman around 25 years old with dark hair, green eyes, full lips, glowing skin. No microphone. Neutral composed serious expression like a professional news reporter. Both hands down at her sides. Cropped at the waist, showing only upper body, chest, shoulders, and head"
+  const presenterDesc = "Portrait of a beautiful confident woman around 25 years old with dark hair, green eyes, full lips, glowing skin. No microphone. Neutral composed expression. Both hands hanging naturally down at her sides. Cropped at the waist showing only upper body and head"
 
   let locationPrompt
   if (isStudio) {
-    locationPrompt = `${presenterDesc}. She stands in a modern broadcast studio in front of a large screen showing imagery about: ${topic}. She wears a fitted navy blazer and white blouse. Studio lighting, monitors visible. She gestures toward the screen while presenting.`
+    locationPrompt = `${presenterDesc}. She is in a modern broadcast studio wearing a fitted navy blazer and white blouse. Behind her a large screen shows imagery about: ${topic}. Studio lighting.`
   } else {
     if (!presenterOutfit) {
       presenterOutfit = await callClaude(
-        `Based on this topic, describe in 10 words what stylish but practical clothing a young attractive female field reporter would wear at this location. Be specific about colors and style. Write ONLY the clothing.`,
-        topic,
+        `Based on this topic and location, describe in 10 words what clothing this woman would REALISTICALLY wear if she were actually AT this location. She must look like she belongs there, not like a TV reporter. Be specific. Write ONLY the clothing.`,
+        `Topic: ${topic}\nScene: ${script}`,
         50
       )
       presenterOutfit = presenterOutfit.trim()
     }
-    locationPrompt = `${presenterDesc}. She is on location wearing ${presenterOutfit}. Behind her: the actual scene of "${script}". She gestures toward the scene while reporting. Real location, dramatic natural lighting.`
+    locationPrompt = `${presenterDesc}. She is physically standing at the real location described in: "${script}". She wears ${presenterOutfit}. She is naturally part of the scene, not green-screened. The environment wraps around her realistically. Dramatic natural lighting matching the location.`
   }
 
   const fullPrompt = locationPrompt + REALISM_STYLE_SUFFIX
@@ -1006,7 +1006,7 @@ function isLipSyncScene(globalSceneIndex) {
   return (globalSceneIndex - 2) % 5 === 0
 }
 
-// Build a lip sync scene — with SFX, slow zoom, 0.5s delay at start
+// Build a lip sync scene — use actual lip sync video, 0.5s delay at start
 function buildLipSyncScene(vidPath, voicePath, dur, i, sfxVideoPath = null) {
   const norm = `/tmp/videos/norm_${i}.mp4`
   normalizeSize(vidPath, norm)
@@ -1014,14 +1014,9 @@ function buildLipSyncScene(vidPath, voicePath, dur, i, sfxVideoPath = null) {
   // Total duration = 0.5s delay + audio duration
   const totalDur = dur + 0.5
 
-  // Trim video to total duration
+  // Trim video to total duration — keep the actual lip sync animation
   const trimmed = `/tmp/videos/trimmed_${i}.mp4`
-  execSync(`ffmpeg -y -i "${norm}" -t ${totalDur} -c:v copy -an "${trimmed}"`)
-
-  // Add slow zoom in effect during build stage
-  const zoomed = `/tmp/videos/zoomed_${i}.mp4`
-  const totalFrames = Math.round(totalDur * 30)
-  execSync(`ffmpeg -y -i "${trimmed}" -vf "zoompan=z='min(zoom+0.0006,1.03)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1280x720:fps=30" -an -c:v libx264 -preset fast -crf 18 "${zoomed}"`)
+  execSync(`ffmpeg -y -i "${norm}" -t ${totalDur} -an -c:v libx264 -preset fast -crf 18 "${trimmed}"`)
 
   // Add 0.5s silence before voice
   const delayedVoice = `/tmp/voices/presenter_delayed_${i}.mp3`
@@ -1036,7 +1031,7 @@ function buildLipSyncScene(vidPath, voicePath, dur, i, sfxVideoPath = null) {
       execSync(`ffmpeg -y -i "${sfxVideoPath}" -vn -c:a aac -ar 44100 "${sfxAudio}"`)
       if (fs.existsSync(sfxAudio)) {
         execSync(
-          `ffmpeg -y -i "${zoomed}" -i "${delayedVoice}" -i "${sfxAudio}" -filter_complex "[2:a]lowpass=f=250,highpass=f=50,volume=0.12,afade=t=in:st=0:d=0.5,afade=t=out:st=${Math.max(0, totalDur - 1)}:d=1[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
+          `ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -i "${sfxAudio}" -filter_complex "[2:a]lowpass=f=250,highpass=f=50,volume=0.12,afade=t=in:st=0:d=0.5,afade=t=out:st=${Math.max(0, totalDur - 1)}:d=1[sfx];[1:a]volume=1.0[voice];[sfx][voice]amix=inputs=2:duration=longest:dropout_transition=0[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`
         )
         return out
       }
@@ -1046,7 +1041,7 @@ function buildLipSyncScene(vidPath, voicePath, dur, i, sfxVideoPath = null) {
   }
 
   // Fallback: voice only with delay
-  execSync(`ffmpeg -y -i "${zoomed}" -i "${delayedVoice}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
+  execSync(`ffmpeg -y -i "${trimmed}" -i "${delayedVoice}" -map 0:v -map 1:a -c:v libx264 -preset fast -crf 18 -c:a aac -ar 44100 -ac 2 -shortest "${out}"`)
   return out
 }
 
