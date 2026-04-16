@@ -347,8 +347,7 @@ async function generateLipSync(faceImagePath, voicePath, index, chatId) {
       input: {
         image: imageUrl,
         audio: audioUrl,
-        prompt: "Professional reporter speaking directly into camera with steady eye contact. Neutral composed expression, serious and focused like a news reporter. Both hands down at her sides at all times. Subtle natural head movements only. No hand gestures. No smiling. Calm professional delivery."
-      }
+prompt: "Professional woman speaking directly into camera with steady eye contact. Neutral composed expression. Natural subtle hand gestures that follow her speech rhythm, hands return to rest between gestures. Gentle head movements. Calm confident delivery."      }
     })
   })
   const pred = await res.json()
